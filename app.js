@@ -64,10 +64,14 @@ function fmtTime(ts) {
   if (!ts) return "Never";
   const d = new Date(ts);
   return d.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit"
   });
-}
+};
+
 function hashPin(pin) {
   return btoa(pin.split("").reverse().join(""));
 }
@@ -431,7 +435,7 @@ function expandSubCats(catId, tx, total) {
   return arr.sort((a, b) => b.amt - a.amt);
 }
 
-// Chart.js plugin for leader lines + labels
+// Chart.js plugin for leader lines + labels around donut + percents inside
 const leaderLinePlugin = {
   id: "leaderLines",
   afterDraw(chart, args, opts) {
@@ -439,7 +443,8 @@ const leaderLinePlugin = {
     const meta = chart.getDatasetMeta(0);
     if (!meta || !meta.data) return;
 
-    const total = chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+    const ds = chart.data.datasets[0];
+    const total = ds.data.reduce((a, b) => a + b, 0);
     if (!total) return;
 
     const cx = (chartArea.left + chartArea.right) / 2;
@@ -449,35 +454,50 @@ const leaderLinePlugin = {
     ctx.font = "11px system-ui";
 
     meta.data.forEach((arc, i) => {
-      const val = chart.data.datasets[0].data[i];
+      const val = ds.data[i];
       if (!val) return;
       const label = chart.data.labels[i];
-      const pct = Math.round(val * 100 / total);
+      const pct = Math.round((val * 100) / total);
 
-      const pos = arc.tooltipPosition();
-      const angle = Math.atan2(pos.y - cy, pos.x - cx);
+      const angle = (arc.startAngle + arc.endAngle) / 2;
+      const outerRadius = arc.outerRadius;
+      const innerRadius = arc.innerRadius;
 
-      const lineStartX = pos.x;
-      const lineStartY = pos.y;
-      const lineEndX = pos.x + Math.cos(angle) * 20;
-      const lineEndY = pos.y + Math.sin(angle) * 20;
+      const lineStartX = cx + Math.cos(angle) * (outerRadius * 0.9);
+      const lineStartY = cy + Math.sin(angle) * (outerRadius * 0.9);
 
-      const textX = lineEndX + Math.cos(angle) * 28;
-      const textY = lineEndY + Math.sin(angle) * 2;
+      const lineMidX = cx + Math.cos(angle) * (outerRadius + 12);
+      const lineMidY = cy + Math.sin(angle) * (outerRadius + 12);
 
-      ctx.strokeStyle = opts.color || "#6b7280";
+      const onLeftSide = (angle > Math.PI / 2 || angle < -Math.PI / 2);
+      const horizontalOffset = onLeftSide ? -28 : 28;
+      const lineEndX = lineMidX + horizontalOffset;
+      const lineEndY = lineMidY;
+
+      ctx.strokeStyle = opts?.color || "#4b5563";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(lineStartX, lineStartY);
+      ctx.lineTo(lineMidX, lineMidY);
       ctx.lineTo(lineEndX, lineEndY);
       ctx.stroke();
 
-      ctx.fillStyle = opts.textColor || "#e5e7eb";
+      ctx.fillStyle = opts?.textColor || "#e5e7eb";
       ctx.textBaseline = "middle";
-      ctx.textAlign = (angle > Math.PI / 2 || angle < -Math.PI / 2) ? "right" : "left";
+      ctx.textAlign = onLeftSide ? "right" : "left";
+      const text = `${label}  ${fmt(val)}`;
+      ctx.fillText(text, lineEndX, lineEndY);
 
-      const text = `${label} • ${pct}%`;
-      ctx.fillText(text, textX, textY);
+      const labelRadius = innerRadius + (outerRadius - innerRadius) * 0.5;
+      const innerX = cx + Math.cos(angle) * labelRadius;
+      const innerY = cy + Math.sin(angle) * labelRadius;
+
+      ctx.font = "10px system-ui";
+      ctx.fillStyle = "#f9fafb";
+      ctx.textAlign = "center";
+      ctx.fillText(pct + "%", innerX, innerY);
+
+      ctx.font = "11px system-ui";
     });
 
     ctx.restore();
@@ -512,7 +532,16 @@ function renderStats() {
   });
 
   const labels = [], data = [], colors = [];
-  const base = ["#6366f1", "#f97316", "#22c55e", "#eab308", "#ec4899", "#06b6d4", "#a855f7", "#f97373"];
+  const base = [
+    "#38bdf8",
+    "#a855f7",
+    "#f97316",
+    "#22c55e",
+    "#facc15",
+    "#fb7185",
+    "#2dd4bf",
+    "#4f46e5"
+  ];
   let i = 0, totalExp = 0;
   Object.keys(byCat).forEach(k => {
     const v = byCat[k];
@@ -540,19 +569,19 @@ function renderStats() {
     type: "doughnut",
     data: {
       labels,
-      datasets: [{ data, backgroundColor: colors, borderWidth: 0 }]
+      datasets: [{
+        data,
+        backgroundColor: colors,
+        borderWidth: 2,
+        borderColor: "#020617",
+        hoverOffset: 6,
+        spacing: 2
+      }]
     },
     options: {
       plugins: {
         legend: {
-          display: true,
-          position: "bottom",
-          labels: {
-            color: "#e5e7eb",
-            usePointStyle: true,
-            pointStyle: "circle",
-            padding: 10
-          }
+          display: false
         },
         tooltip: {
           callbacks: {
@@ -560,12 +589,14 @@ function renderStats() {
           }
         }
       },
-      cutout: "60%"
+      layout: {
+        padding: 32
+      },
+      cutout: "55%"
     },
     plugins: [leaderLinePlugin]
   });
-
-  cl.innerHTML = "";
+cl.innerHTML = "";
   const catKeys = Object.keys(byCat)
     .filter(k => byCat[k].amt > 0)
     .sort((a, b) => byCat[b].amt - byCat[a].amt);
@@ -606,11 +637,7 @@ function renderStats() {
     const s1 = document.createElement("div");
     s1.className = "cat-amt";
     s1.textContent = fmt(v.amt);
-    const s2 = document.createElement("div");
-    s2.className = "cat-pct-pill";
-    s2.textContent = pct + "%";
     rv.appendChild(s1);
-    rv.appendChild(s2);
 
     const tg = document.createElement("div");
     tg.className = "cat-toggle";
