@@ -5,10 +5,10 @@
   <meta charset="UTF-8" />
   <title>Expense Manager Mobile Dark</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-
-  <!-- PWA -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#000000" />
+  <link rel="stylesheet" href="app.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
@@ -16,12 +16,6 @@
       });
     }
   </script>
-
-  <!-- Styles -->
-  <link rel="stylesheet" href="app.css" />
-
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -46,20 +40,28 @@
     </div>
   </div>
 
-  <!-- APP -->
   <div class="app" id="app-root">
-    <!-- HEADER -->
     <header class="app-header">
-      <div class="app-title">
-        <span class="app-logo">₹</span>
-        <span>Expense</span>
+      <div>
+        <div class="app-title">
+          <span class="app-logo">₹</span>
+          Expense
+        </div>
+        <!-- Removed "Dark iOS style · Local only" -->
       </div>
-      <div class="badge-pill">
-        <span class="badge-dot"></span> Offline
-      </div>
+      <div class="badge-pill"><span class="badge-dot"></span> Offline</div>
     </header>
 
-    <!-- PERIOD HEADER (GLOBAL MONTH / YEAR) -->
+    <!-- BACKUP BANNER -->
+    <div class="backup-banner hidden" id="backup-banner">
+      <span id="backup-banner-text">Auto-backup failed. Tap Fix to reconfigure.</span>
+      <div class="backup-banner-actions">
+        <button class="btn-banner" id="backup-fix">Fix</button>
+        <button class="btn-banner-close" id="backup-dismiss">×</button>
+      </div>
+    </div>
+
+    <!-- GLOBAL PERIOD HEADER (Month / Year) -->
     <section class="month-header" id="month-header">
       <div class="segment-toggle">
         <button id="mode-month" class="seg seg-active">Month</button>
@@ -68,19 +70,18 @@
       <div class="month-nav">
         <button class="month-btn" id="m-prev">‹</button>
         <div class="month-chip">
-          <div class="month-main" id="m-main">Jan 2025</div>
+          <div class="month-main" id="m-main">Dec 2025</div>
           <div class="month-sub" id="m-sub">This month</div>
         </div>
         <button class="month-btn" id="m-next">›</button>
       </div>
     </section>
 
-    <!-- CONTENT -->
     <main class="content" id="swipe">
       <!-- HOME -->
       <section class="tab-page tab-active" id="tab-home">
         <div class="sum-card">
-          <div class="sum-label" id="sum-label">Period balance</div>
+          <div class="sum-label" id="sum-label">Month balance</div>
           <div class="sum-amt" id="h-bal">₹0</div>
           <div class="sum-row">
             <div class="sum-pill">
@@ -101,20 +102,17 @@
         <div class="stats-grid">
           <div class="stats-card">
             <div class="st-title" id="stats-title">Overview</div>
-            <div class="st-sub" id="stats-sub">Selected period summary</div>
+            <div class="st-sub" id="stats-sub">Selected month summary</div>
             <div class="st-row"><span class="st-lab">Balance</span><span id="s-bal">₹0</span></div>
             <div class="st-row"><span class="st-lab">Income</span><span class="pos" id="s-inc">₹0</span></div>
             <div class="st-row"><span class="st-lab">Expense</span><span class="neg" id="s-exp">₹0</span></div>
             <div class="divider"></div>
             <div class="st-row"><span class="st-lab">Entries</span><span id="s-cnt">0</span></div>
           </div>
-
           <div class="stats-card">
             <div class="st-title">Category breakdown</div>
-            <div class="st-sub" id="cat-sub">Expenses this period</div>
-            <div class="chart-wrap">
-              <canvas id="chart"></canvas>
-            </div>
+            <div class="st-sub" id="cat-sub">Expenses this month</div>
+            <div class="chart-wrap"><canvas id="chart"></canvas></div>
             <div class="cat-list" id="cat-list"></div>
           </div>
         </div>
@@ -143,7 +141,6 @@
           </div>
         </div>
 
-        <!-- BACKUP -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Data & backup</div>
           <div class="st-sub">Your data is stored only in this browser.</div>
@@ -172,7 +169,32 @@
           </div>
         </div>
 
-        <!-- CATEGORY MANAGER -->
+        <!-- AUTO BACKUP -->
+        <div class="stats-card" style="margin-top:12px;">
+          <div class="st-title">Auto backup</div>
+          <div class="st-sub">Automatically save your data to a JSON file in the background.</div>
+          <div class="settings-list">
+            <div class="set-card">
+              <div class="set-main">
+                <span class="set-title">Backup file</span>
+                <span class="set-sub" id="backup-file-label">No file selected</span>
+                <span class="set-sub" id="backup-last">Last backup: Never</span>
+              </div>
+              <button class="btn btn-ghost" id="btn-choose-backup">Choose</button>
+            </div>
+            <div class="set-card">
+              <div class="set-main">
+                <span class="set-title">Backup now</span>
+                <span class="set-sub">Write current data to the selected file.</span>
+              </div>
+              <button class="btn btn-acc" id="btn-backup-now">Backup</button>
+            </div>
+          </div>
+          <div class="hint">
+            Requires a Chromium-based browser (Chrome / Edge) with HTTPS or localhost.
+          </div>
+        </div>
+
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Categories</div>
           <div class="st-sub">Manage categories, subcategories & emojis.</div>
@@ -180,19 +202,20 @@
           <button class="btn btn-ghost small" id="btn-add-cat" style="margin-top:8px;">＋ Add category</button>
         </div>
 
-        <!-- ABOUT -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="set-main">
             <span class="set-title">About</span>
-            <span class="set-sub">Expense Manager Mobile Dark · v1.0 · LocalStorage only.</span>
-            <span class="set-sub">Made with ❤️ by Piyush</span>
+            <span class="set-sub">
+              Expense Manager Mobile Dark · v1.0 · LocalStorage only.<br />
+              Made with ❤️ by Piyush
+            </span>
           </div>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- FAB (only visible on Home via JS) -->
+  <!-- FAB (Home only, JS will hide on other tabs) -->
   <button class="fab" id="fab">+</button>
 
   <!-- ENTRY SHEET -->
@@ -262,14 +285,19 @@
             <input id="c-name" placeholder="Food" required>
           </div>
           <div class="fg fg-full">
-            <label for="c-subcats">Subcategories (comma-separated, can include emoji)</label>
-            <input id="c-subcats" placeholder="Groceries 🛒, Dining Out 🍽">
+            <label>Subcategories</label>
+            <div id="subcat-list" class="subcat-list"></div>
+            <div class="subcat-add-row">
+              <input id="c-subcat-input" placeholder="E.g. Groceries 🛒">
+              <button type="button" class="btn btn-ghost small" id="c-subcat-add">＋ Add</button>
+            </div>
           </div>
         </div>
         <div class="sheet-foot">
           <button type="button" class="btn btn-danger" id="cat-del">Delete</button>
           <button type="submit" class="btn btn-acc" id="cat-save">Save</button>
         </div>
+        <div class="hint">Add subcategories using the field above, then tap × to remove any.</div>
       </form>
     </div>
   </div>
@@ -292,7 +320,6 @@
     </div>
   </div>
 
-  <!-- MAIN JS -->
   <script src="app.js"></script>
 </body>
 

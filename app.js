@@ -1,81 +1,104 @@
 "use strict";
 
-/* ---------------- STATE ---------------- */
-const KEY = "expMgrMobileDarkV2";
+const KEY = "expMgrMobileDarkV1";
+
+// Backup constants
+const BACKUP_DB = "expenseBackupDB";
+const BACKUP_STORE = "meta";
+const BACKUP_KEY = "backupFile";
 
 let state = {
   tx: [],
   cats: {},
-  settings: { pinHash: null, bio: false }
+  settings: {
+    pinHash: null,
+    bio: false,
+    lastBackupTS: null
+  }
 };
 
 let editId = null;
 let editCatId = null;
 let periodMode = "month"; // "month" | "year"
-let offset = 0;
+let periodOffset = 0;     // month offset or year offset depending on mode
 let chart = null;
+
+// backup handle + temp category subcat state
+let backupHandle = null;
+let backupBusy = false;
+let tempSubcats = [];
+let prevSubIds = [];
+let currentCatIdForSheet = null;
 
 const $ = s => document.querySelector(s);
 const qa = s => document.querySelectorAll(s);
 
-/* --------------- HELPERS --------------- */
+/* ---------- DATE / UTILS ---------- */
 function todayISO() {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
+  const da = String(d.getDate()).padStart(2, "0");
+  return d.getFullYear() + "-" + m + "-" + da;
+}
+function monthDate(off) {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth() + off, 1);
+}
+function yearDate(off) {
+  const n = new Date();
+  return new Date(n.getFullYear() + off, 0, 1);
+}
+function sameMonth(ds, md) {
+  const d = new Date(ds);
+  return d.getFullYear() === md.getFullYear() && d.getMonth() === md.getMonth();
+}
+function sameYear(ds, yd) {
+  const d = new Date(ds);
+  return d.getFullYear() === yd.getFullYear();
 }
 function fmt(n) {
   n = Number(n) || 0;
   return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
+function fmtTime(ts) {
+  if (!ts) return "Never";
+  const d = new Date(ts);
+  return d.toLocaleString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
 function hashPin(pin) {
   return btoa(pin.split("").reverse().join(""));
 }
-
-function getPeriodBase() {
-  const now = new Date();
-  if (periodMode === "month") {
-    return new Date(now.getFullYear(), now.getMonth() + offset, 1);
-  } else {
-    return new Date(now.getFullYear() + offset, 0, 1);
-  }
-}
-
-function matchPeriod(dateStr) {
-  const d = new Date(dateStr);
-  const p = getPeriodBase();
-  if (periodMode === "month") {
-    return d.getFullYear() === p.getFullYear() && d.getMonth() === p.getMonth();
-  }
-  return d.getFullYear() === p.getFullYear();
-}
-
-/* --------------- STORAGE --------------- */
 function save() {
   localStorage.setItem(KEY, JSON.stringify(state));
 }
 function load() {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return;
-    const s = JSON.parse(raw);
-    if (s.tx) state.tx = s.tx;
-    if (s.cats) state.cats = s.cats;
-    if (s.settings) state.settings = s.settings;
+    const r = localStorage.getItem(KEY);
+    if (!r) return;
+    const p = JSON.parse(r);
+    if (p.tx) state.tx = p.tx;
+    if (p.cats) state.cats = p.cats;
+    if (p.settings) {
+      state.settings.pinHash = p.settings.pinHash || null;
+      state.settings.bio = !!p.settings.bio;
+      state.settings.lastBackupTS = p.settings.lastBackupTS || null;
+    }
   } catch (e) {
     console.error(e);
   }
 }
 function defaultCats() {
   if (Object.keys(state.cats).length) return;
-  const base = [
+  const d = [
     { id: "food", n: "Food & Drinks", e: "🍕", subs: ["Groceries 🛒", "Dining Out 🍽"] },
     { id: "shop", n: "Shopping", e: "🛍️", subs: ["Online", "Offline"] },
     { id: "trans", n: "Transport", e: "🚗", subs: ["Cab 🚕", "Fuel ⛽"] },
-    { id: "health", n: "Health", e: "💊", subs: ["Doctor", "Medicines"] }
+    { id: "health", n: "Health", e: "💊", subs: ["Doctor", "Medicines"] },
   ];
-  base.forEach(c => {
+  d.forEach(c => {
     state.cats[c.id] = {
       id: c.id,
       name: c.n,
@@ -85,52 +108,214 @@ function defaultCats() {
   });
 }
 
-/* -------- PERIOD HEADER LABELS -------- */
-function updatePeriodHeader() {
-  const p = getPeriodBase();
-  const main = $("#m-main");
-  const sub = $("#m-sub");
+/* ---------- BACKUP: INDEXEDDB HELPERS ---------- */
+function openBackupDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(BACKUP_DB, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(BACKUP_STORE)) {
+        db.createObjectStore(BACKUP_STORE);
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+async function saveBackupHandle(handle) {
+  const db = await openBackupDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BACKUP_STORE, "readwrite");
+    tx.objectStore(BACKUP_STORE).put(handle, BACKUP_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e.target.error);
+  });
+}
+async function loadBackupHandle() {
+  const db = await openBackupDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BACKUP_STORE, "readonly");
+    const req = tx.objectStore(BACKUP_STORE).get(BACKUP_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
 
-  if (periodMode === "month") {
-    main.textContent = p.toLocaleString("en-IN", { month: "short", year: "numeric" });
-    if (offset === 0) sub.textContent = "This month";
-    else if (offset === -1) sub.textContent = "Previous month";
-    else if (offset === 1) sub.textContent = "Next month";
-    else sub.textContent = (offset < 0 ? `${Math.abs(offset)} months ago` : `${offset} months ahead`);
-    $("#sum-label").textContent = "Month balance";
-    $("#stats-sub").textContent = "Selected month summary";
-    $("#cat-sub").textContent = "Expenses this month";
+/* ---------- BACKUP BANNER / LABEL ---------- */
+function showBackupBanner(message) {
+  const banner = $("#backup-banner");
+  const text = $("#backup-banner-text");
+  if (!banner || !text) return;
+  text.textContent = message;
+  banner.classList.remove("hidden");
+}
+function hideBackupBanner() {
+  const banner = $("#backup-banner");
+  if (!banner) return;
+  banner.classList.add("hidden");
+}
+function updateBackupLabel() {
+  const label = $("#backup-file-label");
+  const last = $("#backup-last");
+  if (!label) return;
+
+  if (!backupHandle) {
+    label.textContent = "No file selected";
   } else {
-    main.textContent = p.getFullYear();
-    if (offset === 0) sub.textContent = "This year";
-    else if (offset === -1) sub.textContent = "Last year";
-    else if (offset === 1) sub.textContent = "Next year";
-    else sub.textContent = (offset < 0 ? `${Math.abs(offset)} years ago` : `${offset} years ahead`);
-    $("#sum-label").textContent = "Year balance";
-    $("#stats-sub").textContent = "Selected year summary";
-    $("#cat-sub").textContent = "Expenses this year";
+    label.textContent = backupHandle.name || "Backup file selected";
+  }
+
+  if (last) {
+    last.textContent = "Last backup: " + fmtTime(state.settings.lastBackupTS);
   }
 }
 
-/* --------- FILTER PERIOD TX --------- */
-function periodTx() {
-  return state.tx
-    .filter(t => matchPeriod(t.date))
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
+/* ---------- BACKUP CORE ---------- */
+async function chooseBackupFile() {
+  if (!("showSaveFilePicker" in window)) {
+    alert("Auto backup is only supported in Chromium browsers (Chrome/Edge) with HTTPS or localhost.");
+    return;
+  }
+
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: "expense-backup.json",
+      types: [
+        {
+          description: "JSON file",
+          accept: { "application/json": [".json"] }
+        }
+      ]
+    });
+
+    backupHandle = handle;
+    await saveBackupHandle(handle);
+    hideBackupBanner();
+    updateBackupLabel();
+
+    await saveBackup("Initial backup after selecting file");
+    alert("Backup file configured and initial backup created.");
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      console.error("[Backup] choose failed:", e);
+      alert("Could not select backup file.");
+    }
+  }
 }
 
-/* --------------- HOME --------------- */
+async function saveBackup(reason) {
+  if (!backupHandle) return;
+  if (backupBusy) return;
+  backupBusy = true;
+
+  try {
+    const perm = await backupHandle.queryPermission({ mode: "readwrite" });
+    if (perm !== "granted") {
+      throw new Error("permission_revoked");
+    }
+
+    const writable = await backupHandle.createWritable();
+    await writable.write(JSON.stringify(state, null, 2));
+    await writable.close();
+
+    console.log("[Backup] Saved:", reason || "(no reason)");
+    state.settings.lastBackupTS = Date.now();
+    save();
+    updateBackupLabel();
+  } catch (e) {
+    if (
+      e.message === "permission_revoked" ||
+      e.name === "NotAllowedError" ||
+      e.name === "SecurityError"
+    ) {
+      showBackupBanner("Auto-backup lost access to your backup file. Tap Fix to choose again.");
+      backupHandle = null;
+      try { await saveBackupHandle(null); } catch (_) { }
+      updateBackupLabel();
+    } else {
+      console.error("[Backup] Failed:", e);
+    }
+  } finally {
+    backupBusy = false;
+  }
+}
+
+function triggerBackup(reason) {
+  if (!backupHandle) return;
+  saveBackup(reason);
+}
+
+function shouldDailyBackup() {
+  if (!backupHandle) return false;
+  if (!state.settings.lastBackupTS) return true;
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  return now - state.settings.lastBackupTS > DAY;
+}
+
+async function checkDailyBackup() {
+  if (shouldDailyBackup()) {
+    await saveBackup("Automatic daily backup on app open/focus");
+  }
+}
+
+/* ---------- PERIOD TX HELPERS ---------- */
+function getPeriodTx() {
+  if (periodMode === "month") {
+    const md = monthDate(periodOffset);
+    return state.tx
+      .filter(t => sameMonth(t.date, md))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  } else {
+    const yd = yearDate(periodOffset);
+    return state.tx
+      .filter(t => sameYear(t.date, yd))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }
+}
+
+function mLabel() {
+  const mm = $("#m-main");
+  const ms = $("#m-sub");
+  if (!mm || !ms) return;
+
+  if (periodMode === "month") {
+    const md = monthDate(periodOffset);
+    const monthShort = md.toLocaleString("en-IN", { month: "short" }); // 3 chars
+    mm.textContent = `${monthShort} ${md.getFullYear()}`;
+
+    let t = "";
+    if (periodOffset === 0) t = "This month";
+    else if (periodOffset === -1) t = "Previous month";
+    else if (periodOffset === 1) t = "Next month";
+    else t = (periodOffset < 0 ? Math.abs(periodOffset) + " months ago" : periodOffset + " months ahead");
+    ms.textContent = t;
+  } else {
+    const yd = yearDate(periodOffset);
+    const y = yd.getFullYear();
+    mm.textContent = `${y}`;
+    let t = "";
+    if (periodOffset === 0) t = "This year";
+    else if (periodOffset === -1) t = "Previous year";
+    else if (periodOffset === 1) t = "Next year";
+    else t = (periodOffset < 0 ? Math.abs(periodOffset) + " years ago" : periodOffset + " years ahead");
+    ms.textContent = t;
+  }
+
+  // update labels on cards
+  $("#sum-label").textContent = periodMode === "month" ? "Month balance" : "Year balance";
+  $("#stats-sub").textContent = periodMode === "month" ? "Selected month summary" : "Selected year summary";
+  $("#cat-sub").textContent = periodMode === "month" ? "Expenses this month" : "Expenses this year";
+}
+
+/* ---------- HOME RENDER ---------- */
 function renderHome() {
-  const list = $("#home-list");
-  const txs = periodTx();
-
+  const list = $("#home-list"), mt = getPeriodTx();
   let inc = 0, exp = 0;
-  txs.forEach(t => {
+  mt.forEach(t => {
     const a = Number(t.amount) || 0;
-    if (t.type === "income") inc += a;
-    else exp += a;
+    t.type === "income" ? inc += a : exp += a;
   });
-
   $("#h-inc").textContent = fmt(inc);
   $("#h-exp").textContent = fmt(exp);
   const bal = inc - exp;
@@ -140,16 +325,15 @@ function renderHome() {
   if (bal > 0) hb.classList.add("pos");
   else if (bal < 0) hb.classList.add("neg");
 
-  if (!txs.length) {
-    list.innerHTML = `<div class="empty">No entries for this period. Tap + to add.</div>`;
+  if (!mt.length) {
+    list.innerHTML = '<div class="empty">No entries for this period. Tap + to add.</div>';
     return;
   }
 
   const groups = {};
-  txs.forEach(t => {
+  mt.forEach(t => {
     (groups[t.date] || (groups[t.date] = [])).push(t);
   });
-
   const dates = Object.keys(groups).sort((a, b) => new Date(b) - new Date(a));
   list.innerHTML = "";
 
@@ -159,16 +343,14 @@ function renderHome() {
 
     const h = document.createElement("div");
     h.className = "day-head";
-
     const d = new Date(ds);
     const m = document.createElement("div");
     m.className = "day-main";
     m.textContent = d.toLocaleString("en-IN", {
       weekday: "short",
       day: "2-digit",
-      month: "short"
+      month: "short" // already short like "Dec"
     });
-
     const s = document.createElement("div");
     s.className = "day-sub";
     let di = 0, de = 0;
@@ -176,99 +358,139 @@ function renderHome() {
       const a = Number(t.amount) || 0;
       t.type === "income" ? di += a : de += a;
     });
-    s.textContent = `Inc ${fmt(di)} · Exp ${fmt(de)}`;
-
+    s.textContent = "Inc " + fmt(di) + " · Exp " + fmt(de);
     h.appendChild(m);
     h.appendChild(s);
     g.appendChild(h);
 
     groups[ds].forEach(t => {
-      const cat = state.cats[t.catId];
+      const c = document.createElement("div");
+      c.className = "tx-card";
+      c.addEventListener("click", () => openEntrySheet(t.id));
 
-      const card = document.createElement("div");
-      card.className = "tx-card";
-      card.onclick = () => openEntrySheet(t.id);
-
-      const left = document.createElement("div");
-      left.className = "tx-l";
-
+      const l = document.createElement("div");
+      l.className = "tx-l";
       const ic = document.createElement("div");
       ic.className = "tx-icon";
-      ic.textContent = cat?.emoji || "💸";
+      const cat = state.cats[t.catId];
+      let em = t.catEmoji || "💸";
+      if (cat) em = cat.emoji || em;
+      ic.textContent = em;
 
       const main = document.createElement("div");
       main.className = "tx-main";
-
-      const title = document.createElement("div");
-      title.className = "tx-title";
-      let ttl = cat ? cat.name : "Other";
+      const ti = document.createElement("div");
+      ti.className = "tx-title";
+      let title = (cat ? cat.name : "Other");
       if (t.subId && cat) {
         const sb = cat.subs.find(s => s.id === t.subId);
-        if (sb) ttl += " · " + sb.name;
+        if (sb) title += " · " + sb.name;
       }
-      title.textContent = ttl;
+      ti.textContent = title;
+      const no = document.createElement("div");
+      no.className = "tx-note";
+      no.textContent = t.note || "No note";
+      main.appendChild(ti);
+      main.appendChild(no);
 
-      const note = document.createElement("div");
-      note.className = "tx-note";
-      let subcat = "";
-      if (t.subId && cat) {
-        const sb = cat.subs.find(s => s.id === t.subId);
-        if (sb) subcat = sb.name;
-      }
-      if (subcat) {
-        note.textContent = subcat + (t.note ? " • " + t.note : "");
-      } else {
-        note.textContent = t.note || "No note";
-      }
+      l.appendChild(ic);
+      l.appendChild(main);
 
-      main.appendChild(title);
-      main.appendChild(note);
-      left.appendChild(ic);
-      left.appendChild(main);
-
-      const right = document.createElement("div");
-      right.className = "tx-r";
+      const r = document.createElement("div");
+      r.className = "tx-r";
       const am = document.createElement("div");
-      am.textContent = fmt(t.amount);
+      const a = Number(t.amount) || 0;
+      am.textContent = fmt(a);
       am.className = t.type === "income" ? "pos" : "neg";
-      right.appendChild(am);
+      r.appendChild(am);
 
-      card.appendChild(left);
-      card.appendChild(right);
-      g.appendChild(card);
+      c.appendChild(l);
+      c.appendChild(r);
+      g.appendChild(c);
     });
 
     list.appendChild(g);
   });
 }
 
-/* --------------- STATS / CHART --------------- */
-function expandSubCats(catId, expTx, totalAmt) {
+/* ---------- STATS / CHART ---------- */
+function expandSubCats(catId, tx, total) {
   const cat = state.cats[catId];
-  if (!cat) return [{ name: "Other", amt: totalAmt }];
+  if (!cat) return [{ name: "Other", amt: total }];
 
   const map = {};
   cat.subs.forEach(s => map[s.id] = { name: s.name, amt: 0 });
   let other = 0;
-  expTx.forEach(t => {
+  tx.filter(t => t.catId === catId && t.type === "expense").forEach(t => {
     const a = Number(t.amount) || 0;
-    if (t.subId && map[t.subId]) map[t.subId].amt += a;
+    if (map[t.subId]) map[t.subId].amt += a;
     else other += a;
   });
-
   const arr = Object.values(map).filter(x => x.amt > 0);
   if (other > 0) arr.push({ name: "Other", amt: other });
   return arr.sort((a, b) => b.amt - a.amt);
 }
 
+// Chart.js plugin for leader lines + labels
+const leaderLinePlugin = {
+  id: "leaderLines",
+  afterDraw(chart, args, opts) {
+    const { ctx, chartArea } = chart;
+    const meta = chart.getDatasetMeta(0);
+    if (!meta || !meta.data) return;
+
+    const total = chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+    if (!total) return;
+
+    const cx = (chartArea.left + chartArea.right) / 2;
+    const cy = (chartArea.top + chartArea.bottom) / 2;
+
+    ctx.save();
+    ctx.font = "11px system-ui";
+
+    meta.data.forEach((arc, i) => {
+      const val = chart.data.datasets[0].data[i];
+      if (!val) return;
+      const label = chart.data.labels[i];
+      const pct = Math.round(val * 100 / total);
+
+      const pos = arc.tooltipPosition();
+      const angle = Math.atan2(pos.y - cy, pos.x - cx);
+
+      const lineStartX = pos.x;
+      const lineStartY = pos.y;
+      const lineEndX = pos.x + Math.cos(angle) * 20;
+      const lineEndY = pos.y + Math.sin(angle) * 20;
+
+      const textX = lineEndX + Math.cos(angle) * 28;
+      const textY = lineEndY + Math.sin(angle) * 2;
+
+      ctx.strokeStyle = opts.color || "#6b7280";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lineStartX, lineStartY);
+      ctx.lineTo(lineEndX, lineEndY);
+      ctx.stroke();
+
+      ctx.fillStyle = opts.textColor || "#e5e7eb";
+      ctx.textBaseline = "middle";
+      ctx.textAlign = (angle > Math.PI / 2 || angle < -Math.PI / 2) ? "right" : "left";
+
+      const text = `${label} • ${pct}%`;
+      ctx.fillText(text, textX, textY);
+    });
+
+    ctx.restore();
+  }
+};
+
 function renderStats() {
-  const txs = periodTx();
+  const mt = getPeriodTx();
   let inc = 0, exp = 0;
-  txs.forEach(t => {
+  mt.forEach(t => {
     const a = Number(t.amount) || 0;
     t.type === "income" ? inc += a : exp += a;
   });
-
   $("#s-inc").textContent = fmt(inc);
   $("#s-exp").textContent = fmt(exp);
   const bal = inc - exp;
@@ -277,50 +499,43 @@ function renderStats() {
   sb.classList.remove("pos", "neg");
   if (bal > 0) sb.classList.add("pos");
   else if (bal < 0) sb.classList.add("neg");
-  $("#s-cnt").textContent = txs.length;
+  $("#s-cnt").textContent = mt.length;
 
-  const expTx = txs.filter(t => t.type === "expense");
+  const ctx = $("#chart").getContext("2d");
+  const expTx = mt.filter(t => t.type === "expense");
   const byCat = {};
   expTx.forEach(t => {
+    const c = state.cats[t.catId];
     const key = t.catId || "other";
-    if (!byCat[key]) byCat[key] = { amt: 0, cat: state.cats[t.catId] || null };
-    byCat[key].amt += Number(t.amount) || 0;
+    if (!byCat[key]) byCat[key] = { amt: 0, cat: c };
+    byCat[key].amt += (Number(t.amount) || 0);
   });
 
-  const entries = [];
-  Object.keys(byCat).forEach(cid => {
-    if (!byCat[cid].amt) return;
-    entries.push({
-      cid,
-      amt: byCat[cid].amt,
-      cat: byCat[cid].cat
-    });
+  const labels = [], data = [], colors = [];
+  const base = ["#6366f1", "#f97316", "#22c55e", "#eab308", "#ec4899", "#06b6d4", "#a855f7", "#f97373"];
+  let i = 0, totalExp = 0;
+  Object.keys(byCat).forEach(k => {
+    const v = byCat[k];
+    if (!v.amt) return;
+    totalExp += v.amt;
+    labels.push(v.cat ? v.cat.name : "Other");
+    data.push(v.amt);
+    colors.push(base[i++ % base.length]);
   });
 
-  if (!entries.length) {
-    if (chart) chart.destroy();
-    const ctx = $("#chart").getContext("2d");
+  if (chart) chart.destroy();
+  const cl = $("#cat-list");
+
+  if (!data.length) {
     chart = new Chart(ctx, {
       type: "doughnut",
-      data: { labels: ["No data"], datasets: [{ data: [1], backgroundColor: ["#1f2937"] }] },
-      options: {
-        plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        cutout: "70%"
-      }
+      data: { labels: ["No data"], datasets: [{ data: [1], backgroundColor: ["#1f2937"], borderWidth: 0 }] },
+      options: { plugins: { legend: { display: false }, tooltip: { enabled: false } }, cutout: "65%" }
     });
-    $("#cat-list").innerHTML = `<div class="empty">No expense data for this period.</div>`;
+    cl.innerHTML = '<div class="empty">No expense data for this period.</div>';
     return;
   }
 
-  const palette = ["#6366f1","#f97316","#22c55e","#eab308","#ec4899","#06b6d4","#a855f7","#f97373"];
-  entries.sort((a, b) => b.amt - a.amt).forEach((e, i) => e.color = palette[i % palette.length]);
-
-  const labels = entries.map(e => e.cat?.name || "Other");
-  const data = entries.map(e => e.amt);
-  const colors = entries.map(e => e.color);
-
-  const ctx = $("#chart").getContext("2d");
-  if (chart) chart.destroy();
   chart = new Chart(ctx, {
     type: "doughnut",
     data: {
@@ -346,15 +561,18 @@ function renderStats() {
         }
       },
       cutout: "60%"
-    }
+    },
+    plugins: [leaderLinePlugin]
   });
 
-  const catList = $("#cat-list");
-  catList.innerHTML = "";
-  const totalExp = expTx.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  cl.innerHTML = "";
+  const catKeys = Object.keys(byCat)
+    .filter(k => byCat[k].amt > 0)
+    .sort((a, b) => byCat[b].amt - byCat[a].amt);
 
-  entries.forEach(e => {
-    const pct = Math.round(e.amt * 100 / totalExp);
+  catKeys.forEach((k, idx) => {
+    const v = byCat[k];
+    const pct = Math.round(v.amt * 100 / totalExp);
 
     const item = document.createElement("div");
     item.className = "cat-item";
@@ -362,81 +580,169 @@ function renderStats() {
     const head = document.createElement("div");
     head.className = "cat-head";
 
-    const left = document.createElement("div");
-    left.className = "cat-l";
-
-    const colorDot = document.createElement("span");
-    colorDot.className = "cat-color-dot";
-    colorDot.style.backgroundColor = e.color;
-
+    const l = document.createElement("div");
+    l.className = "cat-l";
     const ic = document.createElement("div");
     ic.className = "cat-ic";
-    ic.textContent = e.cat?.emoji || "💸";
-
-    const nameBox = document.createElement("div");
-    nameBox.style.display = "flex";
-    nameBox.style.flexDirection = "column";
-
+    ic.textContent = v.cat && v.cat.emoji ? v.cat.emoji : "💸";
     const nm = document.createElement("div");
     nm.className = "cat-name";
-    nm.textContent = e.cat?.name || "Other";
-
+    nm.textContent = v.cat ? v.cat.name : "Other";
     const pr = document.createElement("div");
     pr.className = "cat-per";
     pr.textContent = pct + "%";
 
-    nameBox.appendChild(nm);
-    nameBox.appendChild(pr);
+    const twrap = document.createElement("div");
+    twrap.style.display = "flex";
+    twrap.style.flexDirection = "column";
+    twrap.appendChild(nm);
+    twrap.appendChild(pr);
 
-    left.appendChild(colorDot);
-    left.appendChild(ic);
-    left.appendChild(nameBox);
+    l.appendChild(ic);
+    l.appendChild(twrap);
 
-    const val = document.createElement("div");
-    val.className = "cat-val";
-    val.innerHTML = `<strong>${fmt(e.amt)}</strong><span>${pct}%</span>`;
+    const rv = document.createElement("div");
+    rv.className = "cat-val";
+    const s1 = document.createElement("div");
+    s1.className = "cat-amt";
+    s1.textContent = fmt(v.amt);
+    const s2 = document.createElement("div");
+    s2.className = "cat-pct-pill";
+    s2.textContent = pct + "%";
+    rv.appendChild(s1);
+    rv.appendChild(s2);
 
     const tg = document.createElement("div");
     tg.className = "cat-toggle";
     tg.textContent = "▾";
 
-    head.appendChild(left);
-    head.appendChild(val);
+    head.appendChild(l);
+    head.appendChild(rv);
     head.appendChild(tg);
 
     const subBox = document.createElement("div");
     subBox.className = "sub-list";
-    const subs = expandSubCats(e.cid, expTx.filter(t => t.catId === e.cid), e.amt);
+    const subs = expandSubCats(k, expTx, v.amt);
     subs.forEach(s => {
-      const row = document.createElement("div");
-      row.className = "sub-row";
-      row.innerHTML = `<span>${s.name}</span><span>${fmt(s.amt)} · ${Math.round(s.amt * 100 / e.amt)}%</span>`;
-      subBox.appendChild(row);
+      const r = document.createElement("div");
+      r.className = "sub-row";
+      const l1 = document.createElement("span");
+      l1.textContent = s.name;
+      const r1 = document.createElement("span");
+      r1.textContent = `${fmt(s.amt)} · ${Math.round(s.amt * 100 / v.amt)}%`;
+      r.appendChild(l1);
+      r.appendChild(r1);
+      subBox.appendChild(r);
     });
-
-    head.onclick = () => {
-      const open = subBox.style.display === "block";
-      subBox.style.display = open ? "none" : "block";
-      tg.textContent = open ? "▾" : "▴";
-    };
 
     item.appendChild(head);
     item.appendChild(subBox);
-    catList.appendChild(item);
+    head.addEventListener("click", () => {
+      const vis = subBox.style.display === "block";
+      subBox.style.display = vis ? "none" : "block";
+      tg.textContent = vis ? "▾" : "▴";
+    });
+    if (idx === 0) subBox.style.display = "block";
+    cl.appendChild(item);
   });
 }
 
-/* --------------- CATEGORY MANAGER --------------- */
-function renderCatMgr() {
-  const box = $("#cat-mgr");
-  box.innerHTML = "";
-  const cats = Object.values(state.cats);
-  if (!cats.length) {
-    box.innerHTML = `<div class="empty">No categories. Add one.</div>`;
-    return;
+/* ---------- SHEETS HELPERS ---------- */
+function openSheet(id) { $(id).classList.add("active"); }
+function closeSheet(id) { $(id).classList.remove("active"); }
+
+function fillCatSelect() {
+  const sel = $("#e-cat"), sub = $("#e-subcat");
+  sel.innerHTML = "";
+  const opt = document.createElement("option");
+  opt.value = "";
+  opt.textContent = "Select";
+  sel.appendChild(opt);
+  Object.values(state.cats).forEach(c => {
+    const o = document.createElement("option");
+    o.value = c.id;
+    o.textContent = (c.emoji || "") + " " + c.name;
+    sel.appendChild(o);
+  });
+  sub.innerHTML = "";
+  const o2 = document.createElement("option");
+  o2.value = "";
+  o2.textContent = "None";
+  sub.appendChild(o2);
+}
+function fillSubSelect(catId) {
+  const sub = $("#e-subcat");
+  sub.innerHTML = "";
+  const o = document.createElement("option");
+  o.value = "";
+  o.textContent = "None";
+  sub.appendChild(o);
+  const c = state.cats[catId];
+  if (!c) return;
+  c.subs.forEach(s => {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = s.name;
+    sub.appendChild(o);
+  });
+}
+
+/* ---------- ENTRY SHEET ---------- */
+function openEntrySheet(id) {
+  editId = id || null;
+  const f = $("#entry-form");
+  f.reset();
+  $("#e-type").value = "expense";
+  $("#e-date").value = todayISO();
+  fillCatSelect();
+  $("#e-subcat").innerHTML = '<option value="">None</option>';
+  const delBtn = $("#entry-del");
+  if (delBtn) delBtn.style.display = id ? "inline-flex" : "none";
+  $("#entry-save").textContent = id ? "Save" : "Add";
+  $("#entry-title").textContent = id ? "Edit entry" : "Add entry";
+
+  if (id) {
+    const t = state.tx.find(x => x.id === id);
+    if (!t) return;
+    $("#e-type").value = t.type;
+    $("#e-amt").value = t.amount;
+    $("#e-date").value = t.date;
+    $("#e-note").value = t.note || "";
+    if (t.catId) {
+      $("#e-cat").value = t.catId;
+      fillSubSelect(t.catId);
+      if (t.subId) $("#e-subcat").value = t.subId;
+    }
+  } else {
+    $("#e-date").value = todayISO();
   }
 
-  cats.forEach(c => {
+  openSheet("#sheet-entry");
+}
+
+function deleteEntry() {
+  if (!editId) return;
+  const idx = state.tx.findIndex(t => t.id === editId);
+  if (idx === -1) return;
+  if (!confirm("Delete this entry?")) return;
+  state.tx.splice(idx, 1);
+  save();
+  triggerBackup("Entry deleted");
+  editId = null;
+  closeSheet("#sheet-entry");
+  rerender();
+}
+
+/* ---------- CATEGORY MANAGER & SHEET ---------- */
+function renderCatMgr() {
+  const box = $("#cat-mgr");
+  if (!box) return;
+  if (!Object.keys(state.cats).length) {
+    box.innerHTML = '<div class="empty">No categories. Add one.</div>';
+    return;
+  }
+  box.innerHTML = "";
+  Object.values(state.cats).forEach(c => {
     const card = document.createElement("div");
     card.className = "cat-card";
 
@@ -452,28 +758,25 @@ function renderCatMgr() {
 
     const main = document.createElement("div");
     main.className = "cat-card-main";
-
     const nm = document.createElement("div");
     nm.className = "cat-card-name";
     nm.textContent = c.name;
-
     const sb = document.createElement("div");
     sb.className = "cat-card-sub";
     sb.textContent = c.subs.length ? c.subs.map(s => s.name).join(", ") : "No subcategories";
-
     main.appendChild(nm);
     main.appendChild(sb);
+
     left.appendChild(ic);
     left.appendChild(main);
 
     const btns = document.createElement("div");
     btns.className = "cat-card-btns";
-
-    const edit = document.createElement("button");
-    edit.className = "btn btn-ghost small";
-    edit.textContent = "Edit";
-    edit.onclick = () => openCatSheet(c.id);
-    btns.appendChild(edit);
+    const b1 = document.createElement("button");
+    b1.className = "btn btn-ghost small";
+    b1.textContent = "Edit";
+    b1.onclick = () => openCatSheet(c.id);
+    btns.appendChild(b1);
 
     head.appendChild(left);
     head.appendChild(btns);
@@ -482,87 +785,47 @@ function renderCatMgr() {
   });
 }
 
-/* --------------- ENTRY SHEET --------------- */
-function fillCatSelect() {
-  const catSel = $("#e-cat");
-  catSel.innerHTML = "";
-  Object.values(state.cats).forEach(c => {
-    const o = document.createElement("option");
-    o.value = c.id;
-    o.textContent = (c.emoji || "") + " " + c.name;
-    catSel.appendChild(o);
+function renderSubcatList() {
+  const box = $("#subcat-list");
+  if (!box) return;
+  box.innerHTML = "";
+  tempSubcats.forEach(s => {
+    const pill = document.createElement("div");
+    pill.className = "subcat-pill";
+
+    const name = document.createElement("span");
+    name.className = "subcat-name";
+    name.textContent = s.name;
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "subcat-del";
+    del.textContent = "×";
+    del.dataset.id = s.id;
+
+    pill.appendChild(name);
+    pill.appendChild(del);
+    box.appendChild(pill);
   });
 }
 
-function fillSubSelect(catId) {
-  const subSel = $("#e-subcat");
-  subSel.innerHTML = "";
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = "None";
-  subSel.appendChild(none);
-  if (!catId || !state.cats[catId]) return;
-  state.cats[catId].subs.forEach(s => {
-    const o = document.createElement("option");
-    o.value = s.id;
-    o.textContent = s.name;
-    subSel.appendChild(o);
-  });
-}
-
-function openEntrySheet(id) {
-  editId = id || null;
-  const form = $("#entry-form");
-  form.reset();
-  $("#entry-del").style.display = id ? "inline-flex" : "none";
-  $("#entry-title").textContent = id ? "Edit entry" : "Add entry";
-  $("#entry-save").textContent = id ? "Save" : "Add";
-
-  fillCatSelect();
-
-  if (id) {
-    const t = state.tx.find(x => x.id === id);
-    if (!t) return;
-    $("#e-type").value = t.type;
-    $("#e-amt").value = t.amount;
-    $("#e-cat").value = t.catId;
-    fillSubSelect(t.catId);
-    if (t.subId) $("#e-subcat").value = t.subId;
-    $("#e-date").value = t.date;
-    $("#e-note").value = t.note || "";
-  } else {
-    const firstCat = Object.keys(state.cats)[0];
-    if (firstCat) {
-      $("#e-cat").value = firstCat;
-      fillSubSelect(firstCat);
-    }
-    $("#e-date").value = todayISO();
-  }
-
-  openSheet("#sheet-entry");
-}
-
-function deleteEntry() {
-  if (!editId) return;
-  if (!confirm("Delete this entry?")) return;
-  state.tx = state.tx.filter(t => t.id !== editId);
-  save();
-  editId = null;
-  closeSheet("#sheet-entry");
-  rerender();
-}
-
-/* --------------- CATEGORY SHEET --------------- */
 function openCatSheet(id) {
   editCatId = id || null;
   const c = id ? state.cats[id] : null;
 
+  currentCatIdForSheet = c ? c.id : null;
+  prevSubIds = c ? c.subs.map(s => s.id) : [];
+  tempSubcats = c ? c.subs.map(s => ({ id: s.id, name: s.name })) : [];
+
   $("#cat-sheet-title").textContent = id ? "Edit category" : "Add category";
   $("#c-emoji").value = c?.emoji || "";
   $("#c-name").value = c?.name || "";
-  $("#c-subcats").value = c ? c.subs.map(s => s.name).join(", ") : "";
+  const input = $("#c-subcat-input");
+  if (input) input.value = "";
+
   $("#cat-del").style.display = id ? "inline-flex" : "none";
 
+  renderSubcatList();
   openSheet("#sheet-cat");
 }
 
@@ -572,19 +835,39 @@ function saveCategory(e) {
   if (!name) return alert("Category name required");
 
   const emoji = $("#c-emoji").value.trim() || "💸";
-  const subsRaw = $("#c-subcats").value.trim();
-  const subs = subsRaw ? subsRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
 
-  const id = editCatId || ("c" + Date.now());
-  state.cats[id] = {
-    id,
-    name,
-    emoji,
-    subs: subs.map((s, i) => ({ id: id + "-s" + i, name: s }))
-  };
+  if (editCatId) {
+    const id = editCatId;
+    const removedIds = prevSubIds.filter(oldId => !tempSubcats.some(s => s.id === oldId));
+    const subs = tempSubcats.map(s => ({ id: s.id, name: s.name }));
 
-  save();
+    state.cats[id] = { id, name, emoji, subs };
+
+    if (removedIds.length) {
+      state.tx.forEach(t => {
+        if (t.catId === id && removedIds.includes(t.subId)) {
+          t.subId = null;
+        }
+      });
+    }
+
+    save();
+    triggerBackup("Category updated");
+  } else {
+    const id = "c" + Date.now();
+    const subs = tempSubcats.map((s, i) => ({
+      id: id + "-s" + i,
+      name: s.name
+    }));
+    state.cats[id] = { id, name, emoji, subs };
+    save();
+    triggerBackup("Category added");
+  }
+
   editCatId = null;
+  tempSubcats = [];
+  prevSubIds = [];
+  currentCatIdForSheet = null;
   closeSheet("#sheet-cat");
   rerender();
 }
@@ -601,51 +884,120 @@ function deleteCategory() {
       t.subId = null;
     }
   });
+
   save();
+  triggerBackup("Category deleted");
+
   editCatId = null;
+  tempSubcats = [];
+  prevSubIds = [];
+  currentCatIdForSheet = null;
   closeSheet("#sheet-cat");
   rerender();
 }
 
-/* --------------- SHEETS UTIL --------------- */
-function openSheet(id) { $(id).classList.add("active"); }
-function closeSheet(id) { $(id).classList.remove("active"); }
+/* ---------- TABS & SWIPE ---------- */
+function setTab(t) {
+  qa(".tab-page").forEach(x => x.classList.remove("tab-active"));
+  $("#tab-" + t).classList.add("tab-active");
+  qa(".nav-item").forEach(x => x.classList.remove("nav-active"));
+  const btn = document.querySelector('.nav-item[data-tab="' + t + '"]');
+  if (btn) btn.classList.add("nav-active");
 
-/* --------------- PIN LOCK --------------- */
+  // FAB only on home
+  const fab = $("#fab");
+  if (fab) fab.classList.toggle("hidden", t !== "home");
+
+  // hide month header on settings
+  const mh = $("#month-header");
+  if (mh) mh.style.display = (t === "settings") ? "none" : "flex";
+
+  if (t === "stats") renderStats();
+}
+
+function setupSwipe() {
+  const area = $("#swipe");
+  let sx = 0, sy = 0, sw = false;
+  const st = e => {
+    const t = e.touches ? e.touches[0] : e;
+    sx = t.clientX;
+    sy = t.clientY;
+    sw = true;
+  };
+  const ed = e => {
+    if (!sw) return;
+    sw = false;
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 80) return;
+    const active = document.querySelector(".nav-item.nav-active");
+    const tab = active ? active.dataset.tab : "home";
+    if (tab === "settings") return;
+    if (dx < 0) periodOffset++;
+    else periodOffset--;
+    rerender();
+  };
+  area.addEventListener("touchstart", st, { passive: true });
+  area.addEventListener("touchend", ed);
+  area.addEventListener("mousedown", st);
+  area.addEventListener("mouseup", ed);
+}
+
+/* ---------- BIOMETRIC & LOCK ---------- */
+function canUseBio() {
+  return "PublicKeyCredential" in window &&
+    (location.protocol === "https:" || location.hostname === "localhost");
+}
+async function fakeBioFlow() {
+  const challenge = new Uint8Array(32);
+  crypto.getRandomValues(challenge);
+  const pub = {
+    challenge,
+    timeout: 60000,
+    userVerification: "preferred",
+    rpId: location.hostname || undefined,
+    allowCredentials: []
+  };
+  await navigator.credentials.get({ publicKey: pub });
+}
+function updateBioRow() {
+  const row = $("#bio-row"), btn = $("#btn-toggle-bio");
+  if (!row || !btn) return;
+  if (!canUseBio()) { row.style.display = "none"; return; }
+  row.style.display = "flex";
+  btn.textContent = state.settings.bio ? "Disable" : "Enable";
+}
 function setupLock() {
-  const ls = $("#lock");
-  const pins = qa(".pin-inputs input");
-  const main = $("#lock-main-btn");
-  const alt = $("#lock-alt-btn");
+  const ls = $("#lock"),
+    pins = qa(".pin-inputs input"),
+    main = $("#lock-main-btn"),
+    alt = $("#lock-alt-btn"),
+    ttl = $("#lock-title"),
+    sub = $("#lock-sub"),
+    note = $("#lock-note");
 
-  function getPin() {
-    return Array.from(pins).map(i => i.value).join("");
-  }
-  function clearPins() {
-    pins.forEach(i => i.value = "");
-    pins[0].focus();
-  }
-
+  function getPin() { return Array.from(pins).map(i => i.value).join(""); }
   pins.forEach((p, i) => {
-    p.addEventListener("input", () => {
-      if (p.value && i < 3) pins[i + 1].focus();
-    });
-    p.addEventListener("keydown", e => {
-      if (e.key === "Backspace" && !p.value && i > 0) pins[i - 1].focus();
-    });
+    p.addEventListener("input", () => { if (p.value && i < 3) pins[i + 1].focus(); });
+    p.addEventListener("keydown", e => { if (e.key === "Backspace" && !p.value && i > 0) pins[i - 1].focus(); });
   });
+  function clearPins() { pins.forEach(p => p.value = ""); pins[0].focus(); }
 
   const havePin = !!state.settings.pinHash;
   if (!havePin) {
-    $("#lock-title").textContent = "Set PIN";
-    $("#lock-sub").textContent = "Create a 4-digit PIN to protect your expenses.";
+    ttl.textContent = "Set PIN";
+    sub.textContent = "Create a 4-digit PIN to protect your expenses.";
     main.textContent = "Save PIN";
-    $("#lock-note").textContent = "You can enable biometrics later from Settings (HTTPS & supported device).";
+    note.textContent = "You can enable biometrics later from Settings (HTTPS & supported browser).";
   } else {
-    $("#lock-title").textContent = "Enter PIN";
-    $("#lock-sub").textContent = "Unlock to view your expenses.";
+    ttl.textContent = "Enter PIN";
+    sub.textContent = "Unlock to view your expenses.";
     main.textContent = "Unlock";
-    $("#lock-note").textContent = "Forgot PIN? Clear browser data to reset app (this deletes all data).";
+    note.textContent = "Forgot PIN? Clear browser data to reset app (this deletes all data).";
+    if (canUseBio()) {
+      alt.classList.remove("hidden");
+      alt.textContent = state.settings.bio ? "Use biometrics" : "Try biometrics";
+    }
   }
 
   main.onclick = () => {
@@ -655,191 +1007,189 @@ function setupLock() {
       state.settings.pinHash = hashPin(pin);
       save();
       ls.classList.add("hidden");
-      rerender();
     } else {
       if (hashPin(pin) === state.settings.pinHash) {
         ls.classList.add("hidden");
-        rerender();
       } else {
         alert("Wrong PIN.");
         clearPins();
+        return;
       }
     }
+    rerender();
   };
 
-  alt.onclick = () => {
-    alert("Biometric auth is a demo flag here. Real FaceID/TouchID needs WebAuthn + HTTPS.");
+  alt.onclick = async () => {
+    if (!canUseBio()) {
+      alert("Biometric unlock not supported in this context.");
+      return;
+    }
+    try {
+      await fakeBioFlow();
+      ls.classList.add("hidden");
+      if (!state.settings.bio) {
+        state.settings.bio = true;
+        save();
+        updateBioRow();
+      }
+    } catch (e) {
+      alert("Biometric auth failed.");
+    }
   };
 
   clearPins();
 }
 
-/* --------------- NAV / TABS / FAB --------------- */
-function setTab(t) {
-  qa(".tab-page").forEach(x => x.classList.remove("tab-active"));
-  $("#tab-" + t).classList.add("tab-active");
-
-  qa(".nav-item").forEach(x => x.classList.remove("nav-active"));
-  const btn = document.querySelector(`.nav-item[data-tab="${t}"]`);
-  if (btn) btn.classList.add("nav-active");
-
-  // FAB only on Home
-  $("#fab").style.display = (t === "home") ? "flex" : "none";
-
-  // Hide period header on Settings
-  $("#month-header").style.display = (t === "settings") ? "none" : "block";
-
-  if (t === "stats") renderStats();
-}
-
-/* --------------- SWIPE --------------- */
-function setupSwipe() {
-  const area = $("#swipe");
-  let sx = 0, sy = 0, active = false;
-
-  const start = e => {
-    const t = e.touches ? e.touches[0] : e;
-    sx = t.clientX;
-    sy = t.clientY;
-    active = true;
-  };
-  const end = e => {
-    if (!active) return;
-    active = false;
-    const t = e.changedTouches ? e.changedTouches[0] : e;
-    const dx = t.clientX - sx;
-    const dy = t.clientY - sy;
-    if (Math.abs(dx) < 60 || Math.abs(dy) > 80) return;
-    if (dx < 0) offset++;
-    else offset--;
-    rerender();
-  };
-
-  area.addEventListener("touchstart", start, { passive: true });
-  area.addEventListener("touchend", end);
-  area.addEventListener("mousedown", start);
-  area.addEventListener("mouseup", end);
-}
-
-/* --------------- RERENDER --------------- */
+/* ---------- RERENDER ---------- */
 function rerender() {
-  updatePeriodHeader();
+  mLabel();
   renderHome();
-  renderCatMgr();
-  if (document.querySelector(".nav-item.nav-active")?.dataset.tab === "stats") {
+  const active = document.querySelector(".nav-item.nav-active");
+  if (active && active.dataset.tab === "stats") {
     renderStats();
   }
+  renderCatMgr();
 }
 
-/* --------------- INIT --------------- */
+/* ---------- INIT ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   load();
   defaultCats();
-  setupLock();
-  setupSwipe();
-  updatePeriodHeader();
+  mLabel();
   renderHome();
   renderCatMgr();
+  setupSwipe();
 
-  // Tabs
-  qa(".nav-item").forEach(n => {
-    n.addEventListener("click", () => setTab(n.dataset.tab));
-  });
+  qa(".nav-item").forEach(n => n.addEventListener("click", () => setTab(n.dataset.tab)));
 
-  // FAB
-  $("#fab").onclick = () => openEntrySheet(null);
-  $("#fab").style.display = "flex"; // default (Home initial)
+  const fab = $("#fab");
+  if (fab) fab.onclick = () => openEntrySheet(null);
 
-  // Category change -> subcategory list
   $("#e-cat").addEventListener("change", e => fillSubSelect(e.target.value));
-
-  // Entry sheet
-  $("#entry-close").onclick = () => closeSheet("#sheet-entry");
-  $("#entry-cancel").onclick = () => closeSheet("#sheet-entry");
+  $("#entry-close").onclick = () => { editId = null; closeSheet("#sheet-entry"); };
+  $("#entry-cancel").onclick = () => { editId = null; closeSheet("#sheet-entry"); };
   $("#entry-del").onclick = deleteEntry;
-  $("#sheet-entry").addEventListener("click", e => {
-    if (e.target.id === "sheet-entry") closeSheet("#sheet-entry");
-  });
-  $("#entry-form").addEventListener("submit", e => {
-    e.preventDefault();
+
+  $("#entry-form").addEventListener("submit", ev => {
+    ev.preventDefault();
     const type = $("#e-type").value;
     const amt = Number($("#e-amt").value);
     const catId = $("#e-cat").value || null;
     const subId = $("#e-subcat").value || null;
     const date = $("#e-date").value;
     const note = $("#e-note").value.trim();
-
     if (!amt || amt <= 0) { alert("Enter valid amount."); return; }
     if (!date) { alert("Select date."); return; }
-
     if (editId) {
       const t = state.tx.find(x => x.id === editId);
       if (t) {
         t.type = type;
         t.amount = amt;
         t.catId = catId;
-        t.subId = subId || null;
+        t.subId = subId;
         t.date = date;
         t.note = note;
       }
     } else {
-      state.tx.push({
-        id: String(Date.now()),
-        type,
-        amount: amt,
-        catId,
-        subId: subId || null,
-        date,
-        note
-      });
+      state.tx.push({ id: Date.now().toString(), type, amount: amt, catId, subId, date, note });
     }
-
     save();
+    triggerBackup("Entry added/updated");
     closeSheet("#sheet-entry");
     editId = null;
     rerender();
   });
+  $("#sheet-entry").addEventListener("click", e => {
+    if (e.target.id === "sheet-entry") {
+      editId = null;
+      closeSheet("#sheet-entry");
+    }
+  });
 
   // Category sheet
-  $("#cat-close").onclick = () => closeSheet("#sheet-cat");
+  $("#cat-close").onclick = () => {
+    editCatId = null;
+    tempSubcats = [];
+    prevSubIds = [];
+    currentCatIdForSheet = null;
+    closeSheet("#sheet-cat");
+  };
   $("#sheet-cat").addEventListener("click", e => {
-    if (e.target.id === "sheet-cat") closeSheet("#sheet-cat");
+    if (e.target.id === "sheet-cat") {
+      editCatId = null;
+      tempSubcats = [];
+      prevSubIds = [];
+      currentCatIdForSheet = null;
+      closeSheet("#sheet-cat");
+    }
   });
   $("#cat-form").addEventListener("submit", saveCategory);
   $("#cat-del").onclick = deleteCategory;
   $("#btn-add-cat").onclick = () => openCatSheet(null);
 
-  // Period toggle
+  const subAddBtn = $("#c-subcat-add");
+  const subInput = $("#c-subcat-input");
+  const subList = $("#subcat-list");
+
+  if (subAddBtn && subInput) {
+    subAddBtn.onclick = () => {
+      const val = subInput.value.trim();
+      if (!val) return;
+      let id;
+      if (currentCatIdForSheet) {
+        id = currentCatIdForSheet + "-s" + Date.now();
+      } else {
+        id = "new-" + Date.now();
+      }
+      tempSubcats.push({ id, name: val });
+      subInput.value = "";
+      renderSubcatList();
+    };
+  }
+  if (subList) {
+    subList.addEventListener("click", (e) => {
+      const btn = e.target.closest(".subcat-del");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      tempSubcats = tempSubcats.filter(s => s.id !== id);
+      renderSubcatList();
+    });
+  }
+
+  // Month/year nav
+  $("#m-prev").onclick = () => { periodOffset--; rerender(); };
+  $("#m-next").onclick = () => { periodOffset++; rerender(); };
   $("#mode-month").onclick = () => {
-    periodMode = "month";
-    offset = 0;
-    $("#mode-month").classList.add("seg-active");
-    $("#mode-year").classList.remove("seg-active");
-    rerender();
+    if (periodMode !== "month") {
+      periodMode = "month";
+      periodOffset = 0;
+      $("#mode-month").classList.add("seg-active");
+      $("#mode-year").classList.remove("seg-active");
+      rerender();
+    }
   };
   $("#mode-year").onclick = () => {
-    periodMode = "year";
-    offset = 0;
-    $("#mode-year").classList.add("seg-active");
-    $("#mode-month").classList.remove("seg-active");
-    rerender();
+    if (periodMode !== "year") {
+      periodMode = "year";
+      periodOffset = 0;
+      $("#mode-year").classList.add("seg-active");
+      $("#mode-month").classList.remove("seg-active");
+      rerender();
+    }
   };
 
-  // Prev/next
-  $("#m-prev").onclick = () => { offset--; rerender(); };
-  $("#m-next").onclick = () => { offset++; rerender(); };
-
-  // Backup
+  // Export/import/reset
   $("#btn-export").onclick = () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "expense-backup.json";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
   $("#file-import").addEventListener("change", e => {
     const f = e.target.files[0];
     if (!f) return;
@@ -847,9 +1197,13 @@ document.addEventListener("DOMContentLoaded", () => {
     r.onload = ev => {
       try {
         const d = JSON.parse(ev.target.result);
+        if (!d || typeof d !== "object") { alert("Invalid file."); return; }
         if (!confirm("Import data and replace existing?")) return;
-        state = d;
+        state.tx = d.tx || [];
+        state.cats = d.cats || {};
+        state.settings = d.settings || state.settings;
         save();
+        triggerBackup("Import data");
         rerender();
         alert("Import successful.");
       } catch (err) {
@@ -858,25 +1212,72 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     r.readAsText(f);
   });
-
   $("#btn-clear").onclick = () => {
     if (!confirm("Clear all data? This cannot be undone.")) return;
-    state = { tx: [], cats: {}, settings: { pinHash: state.settings.pinHash, bio: false } };
+    state = {
+      tx: [],
+      cats: {},
+      settings: {
+        pinHash: state.settings.pinHash,
+        bio: false,
+        lastBackupTS: null
+      }
+    };
     defaultCats();
     save();
+    triggerBackup("Reset all data");
     rerender();
   };
 
+  // PIN & bio
   $("#btn-change-pin").onclick = () => {
     state.settings.pinHash = null;
     save();
-    $("#lock").classList.remove("hidden");
+    document.getElementById("lock").classList.remove("hidden");
     setupLock();
   };
-
   $("#btn-toggle-bio").onclick = () => {
     state.settings.bio = !state.settings.bio;
     save();
-    alert("Biometric flag toggled (demo). Real biometrics require WebAuthn & HTTPS.");
+    updateBioRow();
+    alert("Biometric flag updated. Real biometric prompt appears on next app unlock.");
   };
+
+  // Auto backup UI & banner
+  const chooseBtn = $("#btn-choose-backup");
+  const backupNowBtn = $("#btn-backup-now");
+  const fixBtn = $("#backup-fix");
+  const dismissBtn = $("#backup-dismiss");
+
+  if (chooseBtn) chooseBtn.onclick = () => chooseBackupFile();
+  if (backupNowBtn) backupNowBtn.onclick = () => {
+    if (!backupHandle) {
+      alert("Choose a backup file first.");
+      return;
+    }
+    saveBackup("Manual backup");
+  };
+  if (fixBtn) fixBtn.onclick = () => chooseBackupFile();
+  if (dismissBtn) dismissBtn.onclick = () => hideBackupBanner();
+
+  if ("indexedDB" in window) {
+    loadBackupHandle()
+      .then((handle) => {
+        backupHandle = handle || null;
+        updateBackupLabel();
+        if (backupHandle) {
+          checkDailyBackup();
+        }
+      })
+      .catch((e) => console.error("[Backup] load handle failed:", e));
+  } else {
+    console.log("[Backup] IndexedDB not available");
+  }
+  window.addEventListener("focus", () => {
+    if (backupHandle) checkDailyBackup();
+  });
+
+  updateBioRow();
+  fillCatSelect();
+  setupLock();
 });
