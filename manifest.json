@@ -1,12 +1,13 @@
 {
-  "name": "Expense Manager",
-  "short_name": "Expense Manager",
-  "description": "A local offline expense manager app with PIN lock.",
-  "start_url": "./",
+  "name": "Expense Manager Mobile Dark",
+  "short_name": "Expense",
+  "description": "A clean offline expense manager with PIN lock, categories, charts and full PWA support.",
+  "start_url": "index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
   "orientation": "portrait",
+  "theme_color": "#000000",
+  "background_color": "#000000",
   "icons": [
     {
       "src": "icons/icon-192.png",
@@ -17,6 +18,28 @@
       "src": "icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add Entry",
+      "short_name": "Add",
+      "description": "Quickly add a new transaction",
+      "url": "index.html#add",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "View Stats",
+      "short_name": "Stats",
+      "description": "Open the Stats tab",
+      "url": "index.html#stats",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
