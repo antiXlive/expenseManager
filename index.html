@@ -17,33 +17,29 @@
     }
   </script>
 
-  <!-- CSS -->
+  <!-- Styles -->
   <link rel="stylesheet" href="app.css" />
 
-  <!-- ChartJS -->
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
-
-  <!-- LOCK SCREEN -->
+  <!-- LOCK -->
   <div id="lock" class="lock-screen">
     <div class="lock-card">
       <div class="lock-title" id="lock-title">Set PIN</div>
       <div class="lock-sub" id="lock-sub">Create a 4-digit PIN to protect your expenses.</div>
-
       <div class="pin-inputs">
         <input maxlength="1" inputmode="numeric">
         <input maxlength="1" inputmode="numeric">
         <input maxlength="1" inputmode="numeric">
         <input maxlength="1" inputmode="numeric">
       </div>
-
       <div class="lock-btns">
         <button class="btn btn-acc" id="lock-main-btn">Save PIN</button>
         <button class="btn btn-ghost hidden" id="lock-alt-btn">Use biometrics</button>
       </div>
-
       <div class="lock-note" id="lock-note">
         Biometrics can be enabled later from Settings (requires HTTPS & supported device).
       </div>
@@ -52,44 +48,40 @@
 
   <!-- APP -->
   <div class="app" id="app-root">
-
     <!-- HEADER -->
     <header class="app-header">
-      <div>
-        <div class="app-title"><span class="app-logo">₹</span>Expense</div>
-        <div class="app-sub">Dark iOS style · Local only</div>
+      <div class="app-title">
+        <span class="app-logo">₹</span>
+        <span>Expense</span>
       </div>
-      <div class="badge-pill"><span class="badge-dot"></span> Offline</div>
+      <div class="badge-pill">
+        <span class="badge-dot"></span> Offline
+      </div>
     </header>
 
-    <!-- PERIOD HEADER -->
+    <!-- PERIOD HEADER (GLOBAL MONTH / YEAR) -->
     <section class="month-header" id="month-header">
       <div class="segment-toggle">
         <button id="mode-month" class="seg seg-active">Month</button>
         <button id="mode-year" class="seg">Year</button>
       </div>
-
       <div class="month-nav">
         <button class="month-btn" id="m-prev">‹</button>
         <div class="month-chip">
-          <div class="month-main" id="m-main">Month</div>
+          <div class="month-main" id="m-main">Jan 2025</div>
           <div class="month-sub" id="m-sub">This month</div>
         </div>
         <button class="month-btn" id="m-next">›</button>
       </div>
-
-      <div class="swipe-hint">Swipe left/right to change</div>
     </section>
 
     <!-- CONTENT -->
     <main class="content" id="swipe">
-
       <!-- HOME -->
       <section class="tab-page tab-active" id="tab-home">
         <div class="sum-card">
-          <div class="sum-label" id="sum-label">Month balance</div>
+          <div class="sum-label" id="sum-label">Period balance</div>
           <div class="sum-amt" id="h-bal">₹0</div>
-
           <div class="sum-row">
             <div class="sum-pill">
               <strong class="pos" id="h-inc">₹0</strong>
@@ -101,37 +93,30 @@
             </div>
           </div>
         </div>
-
         <div id="home-list"></div>
       </section>
 
       <!-- STATS -->
       <section class="tab-page" id="tab-stats">
         <div class="stats-grid">
-
           <div class="stats-card">
             <div class="st-title" id="stats-title">Overview</div>
-            <div class="st-sub" id="stats-sub">Selected month summary</div>
-
+            <div class="st-sub" id="stats-sub">Selected period summary</div>
             <div class="st-row"><span class="st-lab">Balance</span><span id="s-bal">₹0</span></div>
             <div class="st-row"><span class="st-lab">Income</span><span class="pos" id="s-inc">₹0</span></div>
             <div class="st-row"><span class="st-lab">Expense</span><span class="neg" id="s-exp">₹0</span></div>
-
             <div class="divider"></div>
             <div class="st-row"><span class="st-lab">Entries</span><span id="s-cnt">0</span></div>
           </div>
 
           <div class="stats-card">
             <div class="st-title">Category breakdown</div>
-            <div class="st-sub" id="cat-sub">Expenses this month</div>
-
+            <div class="st-sub" id="cat-sub">Expenses this period</div>
             <div class="chart-wrap">
               <canvas id="chart"></canvas>
             </div>
-
             <div class="cat-list" id="cat-list"></div>
           </div>
-
         </div>
       </section>
 
@@ -140,9 +125,7 @@
         <div class="stats-card">
           <div class="st-title">Security</div>
           <div class="st-sub">Lock the app with PIN or biometrics.</div>
-
           <div class="settings-list">
-
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Change PIN</span>
@@ -150,7 +133,6 @@
               </div>
               <button class="btn btn-ghost" id="btn-change-pin">Change</button>
             </div>
-
             <div class="set-card" id="bio-row" style="display:none;">
               <div class="set-main">
                 <span class="set-title">Biometric unlock</span>
@@ -158,7 +140,6 @@
               </div>
               <button class="btn btn-ghost" id="btn-toggle-bio">Enable</button>
             </div>
-
           </div>
         </div>
 
@@ -166,9 +147,7 @@
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Data & backup</div>
           <div class="st-sub">Your data is stored only in this browser.</div>
-
           <div class="settings-list">
-
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Export data</span>
@@ -176,7 +155,6 @@
               </div>
               <button class="btn btn-acc" id="btn-export">Export</button>
             </div>
-
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Import data</span>
@@ -184,7 +162,6 @@
                 <input type="file" id="file-import" accept="application/json">
               </div>
             </div>
-
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Clear everything</span>
@@ -192,47 +169,42 @@
               </div>
               <button class="btn btn-danger" id="btn-clear">Reset</button>
             </div>
-
           </div>
         </div>
 
-        <!-- CATEGORIES -->
+        <!-- CATEGORY MANAGER -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Categories</div>
           <div class="st-sub">Manage categories, subcategories & emojis.</div>
-
           <div class="cat-mgr-list" id="cat-mgr"></div>
           <button class="btn btn-ghost small" id="btn-add-cat" style="margin-top:8px;">＋ Add category</button>
         </div>
 
+        <!-- ABOUT -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="set-main">
             <span class="set-title">About</span>
             <span class="set-sub">Expense Manager Mobile Dark · v1.0 · LocalStorage only.</span>
+            <span class="set-sub">Made with ❤️ by Piyush</span>
           </div>
         </div>
-
       </section>
-
     </main>
   </div>
 
-  <!-- FAB -->
+  <!-- FAB (only visible on Home via JS) -->
   <button class="fab" id="fab">+</button>
 
   <!-- ENTRY SHEET -->
   <div class="sheet-bg" id="sheet-entry">
     <div class="sheet">
       <div class="sheet-handle"></div>
-
       <div class="sheet-header">
         <div class="sheet-title" id="entry-title">Add entry</div>
         <button class="sheet-close" id="entry-close">×</button>
       </div>
-
       <form id="entry-form">
         <div class="form-grid">
-
           <div class="fg">
             <label for="e-type">Type</label>
             <select id="e-type">
@@ -240,37 +212,34 @@
               <option value="income">Income</option>
             </select>
           </div>
-
           <div class="fg">
             <label for="e-amt">Amount (₹)</label>
-            <input id="e-amt" type="number" min="0" required>
+            <input id="e-amt" type="number" min="0" step="0.01" required>
           </div>
-
           <div class="fg">
             <label for="e-cat">Category</label>
-            <select id="e-cat"></select>
+            <select id="e-cat" required></select>
           </div>
-
+          <div class="fg">
+            <label for="e-subcat">Subcategory</label>
+            <select id="e-subcat"></select>
+          </div>
           <div class="fg">
             <label for="e-date">Date</label>
             <input id="e-date" type="date" required>
           </div>
-
           <div class="fg fg-full">
             <label for="e-note">Note</label>
             <textarea id="e-note" placeholder="Optional note"></textarea>
           </div>
         </div>
-
         <div class="sheet-foot">
           <button type="button" class="btn btn-danger" id="entry-del" style="display:none;">Delete</button>
           <button type="button" class="btn btn-ghost" id="entry-cancel">Cancel</button>
           <button type="submit" class="btn btn-acc" id="entry-save">Save</button>
         </div>
-
         <div class="hint">Tap a transaction on Home to edit or delete.</div>
       </form>
-
     </div>
   </div>
 
@@ -282,7 +251,6 @@
         <div class="sheet-title" id="cat-sheet-title">Edit category</div>
         <button class="sheet-close" id="cat-close">×</button>
       </div>
-
       <form id="cat-form">
         <div class="form-grid">
           <div class="fg">
@@ -291,47 +259,41 @@
           </div>
           <div class="fg fg-full">
             <label for="c-name">Name</label>
-            <input id="c-name" required>
+            <input id="c-name" placeholder="Food" required>
           </div>
           <div class="fg fg-full">
-            <label for="c-subcats">Subcategories</label>
+            <label for="c-subcats">Subcategories (comma-separated, can include emoji)</label>
             <input id="c-subcats" placeholder="Groceries 🛒, Dining Out 🍽">
           </div>
         </div>
-
         <div class="sheet-foot">
           <button type="button" class="btn btn-danger" id="cat-del">Delete</button>
           <button type="submit" class="btn btn-acc" id="cat-save">Save</button>
         </div>
-
       </form>
     </div>
   </div>
 
-  <!-- NAV -->
+  <!-- BOTTOM NAV -->
   <div class="bottom-nav">
     <div class="nav-inner">
-
       <div class="nav-item nav-active" data-tab="home">
         <div class="nav-icon">🏠</div>
         <div>Home</div>
       </div>
-
       <div class="nav-item" data-tab="stats">
         <div class="nav-icon">📊</div>
         <div>Stats</div>
       </div>
-
       <div class="nav-item" data-tab="settings">
         <div class="nav-icon">⚙️</div>
         <div>Settings</div>
       </div>
-
     </div>
   </div>
 
   <!-- MAIN JS -->
   <script src="app.js"></script>
-
 </body>
+
 </html>
