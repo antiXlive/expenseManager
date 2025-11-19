@@ -4,102 +4,135 @@
 <head>
   <meta charset="UTF-8" />
   <title>Expense Manager Mobile Dark</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <link rel="manifest" href="manifest.json">
+
+  <!-- Standard meta tags -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
+
+  <!-- Modern replacement for apple-web-app-capable -->
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="app.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- SAFE CDN for Chart.js -->
+  <script src="https://unpkg.com/chart.js/dist/chart.umd.js"></script>
+
+  <!-- Service Worker -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("service-worker.js");
+        navigator.serviceWorker.register("service-worker.js")
+          .catch(err => console.warn("SW registration failed:", err));
       });
     }
   </script>
 </head>
 
+
+
 <body>
-  <!-- LOCK -->
+  <!-- ==============================
+       LOCK SCREEN
+  =============================== -->
   <div id="lock" class="lock-screen">
     <div class="lock-card">
       <div class="lock-title" id="lock-title">Set PIN</div>
       <div class="lock-sub" id="lock-sub">Create a 4-digit PIN to protect your expenses.</div>
+
       <div class="pin-inputs">
         <input maxlength="1" inputmode="numeric">
         <input maxlength="1" inputmode="numeric">
         <input maxlength="1" inputmode="numeric">
         <input maxlength="1" inputmode="numeric">
       </div>
+
       <div class="lock-btns">
         <button class="btn btn-acc" id="lock-main-btn">Save PIN</button>
         <button class="btn btn-ghost hidden" id="lock-alt-btn">Use biometrics</button>
       </div>
+
       <div class="lock-note" id="lock-note">
-        Biometrics can be enabled later from Settings (requires HTTPS & supported device).
+        Biometrics can be enabled later from Settings.
       </div>
     </div>
   </div>
 
+
+  <!-- ==============================
+       APP WRAPPER
+  =============================== -->
   <div class="app" id="app-root">
+
+    <!-- HEADER -->
     <header class="app-header">
-      <div>
-        <div class="app-title">
-          <span class="app-logo">₹</span>
-          Expense
-        </div>
-        <!-- Removed "Dark iOS style · Local only" -->
+      <div class="app-title">
+        <span class="app-logo">₹</span> Expense
       </div>
-      <div class="badge-pill"><span class="badge-dot"></span> Offline</div>
+
+      <div class="badge-pill" id="offline-badge">
+        <span class="badge-dot"></span> Offline
+      </div>
     </header>
 
-    <!-- BACKUP BANNER -->
+    <!-- BACKUP ALERT -->
     <div class="backup-banner hidden" id="backup-banner">
       <span id="backup-banner-text">Auto-backup failed. Tap Fix to reconfigure.</span>
       <div class="backup-banner-actions">
         <button class="btn-banner" id="backup-fix">Fix</button>
-        <button class="btn-banner-close" id="backup-dismiss">×</button>
+        <button class="btn-banner-close" id="backup-dismiss" aria-label="Dismiss">×</button>
       </div>
     </div>
 
-    <!-- GLOBAL PERIOD HEADER (Month / Year) -->
+    <!-- MONTH HEADER -->
     <section class="month-header" id="month-header">
       <div class="segment-toggle">
         <button id="mode-month" class="seg seg-active">Month</button>
         <button id="mode-year" class="seg">Year</button>
       </div>
+
       <div class="month-nav">
-        <button class="month-btn" id="m-prev">‹</button>
+        <button class="month-btn" id="m-prev" aria-label="Previous Month">‹</button>
         <div class="month-chip">
           <div class="month-main" id="m-main">Dec 2025</div>
           <div class="month-sub" id="m-sub">This month</div>
         </div>
-        <button class="month-btn" id="m-next">›</button>
+        <button class="month-btn" id="m-next" aria-label="Next Month">›</button>
       </div>
     </section>
 
+    <!-- ==============================
+         MAIN CONTENT
+    =============================== -->
     <main class="content" id="swipe">
-      <!-- HOME -->
+
+      <!-- HOME TAB -->
       <section class="tab-page tab-active" id="tab-home">
         <div class="sum-card">
           <div class="sum-label" id="sum-label">Month balance</div>
           <div class="sum-amt" id="h-bal">₹0</div>
+
           <div class="sum-row">
             <div class="sum-pill">
               <strong class="pos" id="h-inc">₹0</strong>
               <span>Income</span>
             </div>
+
             <div class="sum-pill">
               <strong class="neg" id="h-exp">₹0</strong>
               <span>Expense</span>
             </div>
           </div>
         </div>
+
         <div id="home-list"></div>
       </section>
 
+      <!-- STATS TAB -->
       <!-- STATS -->
       <section class="tab-page" id="tab-stats">
         <div class="stats-grid">
+
           <div class="stats-card">
             <div class="st-title" id="stats-title">Overview</div>
             <div class="st-sub" id="stats-sub">Selected month summary</div>
@@ -109,20 +142,28 @@
             <div class="divider"></div>
             <div class="st-row"><span class="st-lab">Entries</span><span id="s-cnt">0</span></div>
           </div>
+
           <div class="stats-card">
             <div class="st-title">Category breakdown</div>
             <div class="st-sub" id="cat-sub">Expenses this month</div>
             <div class="chart-wrap"><canvas id="chart"></canvas></div>
             <div class="cat-list" id="cat-list"></div>
           </div>
+
         </div>
       </section>
 
-      <!-- SETTINGS -->
+
+      <!-- ==============================
+           SETTINGS TAB
+      =============================== -->
       <section class="tab-page" id="tab-settings">
+
+        <!-- SECURITY -->
         <div class="stats-card">
           <div class="st-title">Security</div>
           <div class="st-sub">Lock the app with PIN or biometrics.</div>
+
           <div class="settings-list">
             <div class="set-card">
               <div class="set-main">
@@ -131,38 +172,43 @@
               </div>
               <button class="btn btn-ghost" id="btn-change-pin">Change</button>
             </div>
-            <div class="set-card" id="bio-row" style="display:none;">
+
+            <div class="set-card" id="bio-row" hidden>
               <div class="set-main">
                 <span class="set-title">Biometric unlock</span>
-                <span class="set-sub">Use Face ID / Touch ID when available.</span>
+                <span class="set-sub">Use Face ID or Touch ID.</span>
               </div>
               <button class="btn btn-ghost" id="btn-toggle-bio">Enable</button>
             </div>
           </div>
         </div>
 
+        <!-- DATA & BACKUP -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Data & backup</div>
-          <div class="st-sub">Your data is stored only in this browser.</div>
+          <div class="st-sub">Stored only in this browser.</div>
+
           <div class="settings-list">
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Export data</span>
-                <span class="set-sub">Download a JSON backup file.</span>
+                <span class="set-sub">Download as JSON</span>
               </div>
               <button class="btn btn-acc" id="btn-export">Export</button>
             </div>
+
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Import data</span>
-                <span class="set-sub">Restore from a JSON backup.</span>
+                <span class="set-sub">Restore from file</span>
                 <input type="file" id="file-import" accept="application/json">
               </div>
             </div>
+
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Clear everything</span>
-                <span class="set-sub">Delete all transactions & categories.</span>
+                <span class="set-sub">Deletes all data</span>
               </div>
               <button class="btn btn-danger" id="btn-clear">Reset</button>
             </div>
@@ -172,7 +218,8 @@
         <!-- AUTO BACKUP -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Auto backup</div>
-          <div class="st-sub">Automatically save your data to a JSON file in the background.</div>
+          <div class="st-sub">Save your data automatically.</div>
+
           <div class="settings-list">
             <div class="set-card">
               <div class="set-main">
@@ -182,52 +229,60 @@
               </div>
               <button class="btn btn-ghost" id="btn-choose-backup">Choose</button>
             </div>
+
             <div class="set-card">
               <div class="set-main">
                 <span class="set-title">Backup now</span>
-                <span class="set-sub">Write current data to the selected file.</span>
+                <span class="set-sub">Write latest data</span>
               </div>
               <button class="btn btn-acc" id="btn-backup-now">Backup</button>
             </div>
           </div>
-          <div class="hint">
-            Requires a Chromium-based browser (Chrome / Edge) with HTTPS or localhost.
-          </div>
+
+          <div class="hint">Requires Chrome/Edge with HTTPS or localhost.</div>
         </div>
 
+        <!-- CATEGORY MANAGER -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="st-title">Categories</div>
-          <div class="st-sub">Manage categories, subcategories & emojis.</div>
+          <div class="st-sub">Manage emojis & subcategories</div>
+
           <div class="cat-mgr-list" id="cat-mgr"></div>
+
           <button class="btn btn-ghost small" id="btn-add-cat" style="margin-top:8px;">＋ Add category</button>
         </div>
 
+        <!-- ABOUT -->
         <div class="stats-card" style="margin-top:12px;">
           <div class="set-main">
             <span class="set-title">About</span>
             <span class="set-sub">
-              Expense Manager Mobile Dark · v1.0 · LocalStorage only.<br />
+              Expense Manager Mobile Dark · v1.0<br>
               Made with ❤️ by Piyush
             </span>
           </div>
         </div>
+
       </section>
     </main>
   </div>
 
-  <!-- FAB (Home only, JS will hide on other tabs) -->
-  <button class="fab" id="fab">+</button>
+  <!-- FAB -->
+  <button class="fab" id="fab" aria-label="Add Entry">+</button>
 
   <!-- ENTRY SHEET -->
   <div class="sheet-bg" id="sheet-entry">
     <div class="sheet">
       <div class="sheet-handle"></div>
+
       <div class="sheet-header">
         <div class="sheet-title" id="entry-title">Add entry</div>
-        <button class="sheet-close" id="entry-close">×</button>
+        <button class="sheet-close" id="entry-close" aria-label="Close">×</button>
       </div>
+
       <form id="entry-form">
         <div class="form-grid">
+
           <div class="fg">
             <label for="e-type">Type</label>
             <select id="e-type">
@@ -235,32 +290,40 @@
               <option value="income">Income</option>
             </select>
           </div>
+
           <div class="fg">
             <label for="e-amt">Amount (₹)</label>
             <input id="e-amt" type="number" min="0" step="0.01" required>
           </div>
+
           <div class="fg">
             <label for="e-cat">Category</label>
             <select id="e-cat" required></select>
           </div>
+
           <div class="fg">
             <label for="e-subcat">Subcategory</label>
             <select id="e-subcat"></select>
           </div>
+
           <div class="fg">
             <label for="e-date">Date</label>
             <input id="e-date" type="date" required>
           </div>
+
           <div class="fg fg-full">
             <label for="e-note">Note</label>
             <textarea id="e-note" placeholder="Optional note"></textarea>
           </div>
+
         </div>
+
         <div class="sheet-foot">
-          <button type="button" class="btn btn-danger" id="entry-del" style="display:none;">Delete</button>
+          <button type="button" class="btn btn-danger" id="entry-del" hidden>Delete</button>
           <button type="button" class="btn btn-ghost" id="entry-cancel">Cancel</button>
           <button type="submit" class="btn btn-acc" id="entry-save">Save</button>
         </div>
+
         <div class="hint">Tap a transaction on Home to edit or delete.</div>
       </form>
     </div>
@@ -269,58 +332,75 @@
   <!-- CATEGORY SHEET -->
   <div class="sheet-bg" id="sheet-cat">
     <div class="sheet">
+
       <div class="sheet-handle"></div>
+
       <div class="sheet-header">
         <div class="sheet-title" id="cat-sheet-title">Edit category</div>
-        <button class="sheet-close" id="cat-close">×</button>
+        <button class="sheet-close" id="cat-close" aria-label="Close">×</button>
       </div>
+
       <form id="cat-form">
         <div class="form-grid">
+
           <div class="fg">
             <label for="c-emoji">Emoji</label>
             <input id="c-emoji" maxlength="2" placeholder="🍕">
           </div>
+
           <div class="fg fg-full">
             <label for="c-name">Name</label>
             <input id="c-name" placeholder="Food" required>
           </div>
+
           <div class="fg fg-full">
             <label>Subcategories</label>
+
             <div id="subcat-list" class="subcat-list"></div>
+
             <div class="subcat-add-row">
               <input id="c-subcat-input" placeholder="E.g. Groceries 🛒">
               <button type="button" class="btn btn-ghost small" id="c-subcat-add">＋ Add</button>
             </div>
           </div>
+
         </div>
+
         <div class="sheet-foot">
           <button type="button" class="btn btn-danger" id="cat-del">Delete</button>
           <button type="submit" class="btn btn-acc" id="cat-save">Save</button>
         </div>
-        <div class="hint">Add subcategories using the field above, then tap × to remove any.</div>
+
+        <div class="hint">Tap × to remove any subcategory.</div>
       </form>
     </div>
   </div>
 
   <!-- BOTTOM NAV -->
-  <div class="bottom-nav">
+  <nav class="bottom-nav" aria-label="Navigation">
     <div class="nav-inner">
+
       <div class="nav-item nav-active" data-tab="home">
         <div class="nav-icon">🏠</div>
         <div>Home</div>
       </div>
+
       <div class="nav-item" data-tab="stats">
         <div class="nav-icon">📊</div>
         <div>Stats</div>
       </div>
+
       <div class="nav-item" data-tab="settings">
         <div class="nav-icon">⚙️</div>
         <div>Settings</div>
       </div>
-    </div>
-  </div>
 
+    </div>
+  </nav>
+
+  <!-- MAIN SCRIPT -->
   <script src="app.js"></script>
+
 </body>
 
 </html>
