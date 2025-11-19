@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebAuthn Biometric Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #020617;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin: 0 0 8px;
+    }
+    .card {
+      background: #020617;
+      border-radius: 16px;
+      padding: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.8);
+    }
+    .btn {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 999px;
+      border: none;
+      margin-top: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      color: white;
+      cursor: pointer;
+    }
+    .btn.secondary {
+      background: transparent;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .status {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 12px;
+      border-radius: 12px;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      font-size: 0.78rem;
+      color: #a5b4fc;
+      border: 1px solid rgba(129, 140, 248, 0.4);
+    }
+    .pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #22c55e;
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: #9ca3af;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="pill">
+      <span class="pill-dot"></span>
+      WebAuthn • Biometric Login
+    </div>
+    <h1>Biometric Auth in Web App</h1>
+    <p class="hint">
+      This demo uses <strong>WebAuthn</strong> to talk to your phone's
+      built-in authenticator (fingerprint / Face ID / device PIN).<br><br>
+      In a real app, the <em>challenge</em> and <em>credential IDs</em> must be
+      generated and verified on the server.
+    </p>
+
+    <button class="btn" id="btn-register">Register biometric</button>
+    <button class="btn secondary" id="btn-login">Login with biometrics</button>
+
+    <div class="hint">
+      ⚠️ Must be served over HTTPS (or localhost) and supported browser/device.
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>Debug / Status</strong>
+    <div id="status" class="status">Waiting…</div>
+  </div>
+
+  <script>
+    const statusBox = document.getElementById("status");
+    const btnRegister = document.getElementById("btn-register");
+    const btnLogin = document.getElementById("btn-login");
+
+    // Simple log helper
+    function log(msg, obj) {
+      statusBox.textContent += "\n\n" + msg;
+      if (obj) {
+        try {
+          statusBox.textContent += "\n" + JSON.stringify(obj, null, 2);
+        } catch (e) {
+          statusBox.textContent += "\n[Cannot stringify object]";
+        }
+      }
+      statusBox.scrollTop = statusBox.scrollHeight;
+    }
+
+    function toBase64Url(buf) {
+      return btoa(String.fromCharCode(...new Uint8Array(buf)))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+    }
+
+    function fromBase64Url(str) {
+      str = str.replace(/-/g, "+").replace(/_/g, "/");
+      while (str.length % 4) str += "=";
+      const decoded = atob(str);
+      const arr = new Uint8Array(decoded.length);
+      for (let i = 0; i < decoded.length; i++) {
+        arr[i] = decoded.charCodeAt(i);
+      }
+      return arr.buffer;
+    }
+
+    // For demo only: store credential ID in localStorage
+    const LS_KEY = "demo-webauthn-cred-id";
+
+    function randomChallenge(len = 32) {
+      const arr = new Uint8Array(len);
+      window.crypto.getRandomValues(arr);
+      return arr.buffer;
+    }
+
+    async function register() {
+      statusBox.textContent = "Starting registration…";
+
+      if (!("credentials" in navigator) || !("PublicKeyCredential" in window)) {
+        log("❌ WebAuthn not supported in this browser.");
+        return;
+      }
+
+      // In real app, get this config from server
+      const publicKey = {
+        challenge: randomChallenge(),
+        rp: {
+          name: "Expense Manager Demo",
+          id: window.location.hostname || "localhost"
+        },
+        user: {
+          id: new TextEncoder().encode("demo-user-123"), // server-side user ID
+          name: "demo@example.com",
+          displayName: "Demo User"
+        },
+        pubKeyCredParams: [
+          { type: "public-key", alg: -7 },   // ES256
+          { type: "public-key", alg: -257 }  // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: "platform",   // use device biometrics / PIN
+          userVerification: "required"
+        },
+        timeout: 60000,
+        attestation: "none"
+      };
+
+      try {
+        const cred = await navigator.credentials.create({ publicKey });
+        if (!cred) {
+          log("❌ Registration cancelled or failed.");
+          return;
+        }
+
+        // For demo: store credential ID so we can use it in login
+        const rawId = cred.rawId;
+        const credIdB64 = toBase64Url(rawId);
+        localStorage.setItem(LS_KEY, credIdB64);
+
+        log("✅ Registration complete. Saved credential ID locally.", {
+          credentialId: credIdB64,
+          type: cred.type
+        });
+
+        // In real app:
+        //  - Send cred.id, rawId, response.clientDataJSON, response.attestationObject
+        //    to your backend to verify and store
+
+      } catch (err) {
+        log("❌ Error during registration:", { message: err.message, name: err.name });
+      }
+    }
+
+    async function login() {
+      statusBox.textContent = "Starting login…";
+
+      if (!("credentials" in navigator) || !("PublicKeyCredential" in window)) {
+        log("❌ WebAuthn not supported in this browser.");
+        return;
+      }
+
+      const storedId = localStorage.getItem(LS_KEY);
+      if (!storedId) {
+        log("⚠️ No stored credential ID. Please Register first.");
+        return;
+      }
+
+      const allowCred = {
+        id: fromBase64Url(storedId),
+        type: "public-key",
+        transports: ["internal"]
+      };
+
+      // In real app, challenge + allowCredentials come from server
+      const publicKey = {
+        challenge: randomChallenge(),
+        allowCredentials: [allowCred],
+        userVerification: "required",
+        timeout: 60000,
+        rpId: window.location.hostname || "localhost"
+      };
+
+      try {
+        const assertion = await navigator.credentials.get({ publicKey });
+        if (!assertion) {
+          log("❌ Login cancelled or failed.");
+          return;
+        }
+
+        log("✅ Login assertion obtained (biometric / device unlock should have happened).", {
+          id: assertion.id,
+          type: assertion.type
+        });
+
+        // In real app:
+        //  - Send assertion.id, rawId, response.clientDataJSON, response.authenticatorData,
+        //    response.signature, response.userHandle to backend for verification
+        //  - If server says OK → treat as logged in
+
+      } catch (err) {
+        log("❌ Error during login:", { message: err.message, name: err.name });
+      }
+    }
+
+    btnRegister.addEventListener("click", register);
+    btnLogin.addEventListener("click", login);
+  </script>
+</body>
+</html>
