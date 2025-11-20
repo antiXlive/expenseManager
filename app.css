@@ -828,3 +828,60 @@ textarea {
 @media(max-height:650px){
   .chart-wrap { height:220px; }
 }
+
+/* === Entry form: one input per row === */
+.form-stack { display:flex; flex-direction:column; gap:10px; padding:4px 0; }
+.form-stack .fg { display:flex; flex-direction:column; gap:6px; }
+input[readonly] { cursor:pointer; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.15)); }
+
+/* Category picker overlay */
+.picker-bg {
+  position:fixed;
+  left:0;right:0;bottom:0;top:0;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  background:rgba(0,0,0,0.45);
+  z-index:60;
+}
+.picker-bg.hidden { display:none; }
+.picker {
+  width:100%;
+  max-width:720px;
+  height:62%;
+  background:linear-gradient(180deg, rgba(10,11,13,0.85), rgba(8,9,12,0.85));
+  border-radius:18px 18px 0 0;
+  padding:10px;
+  box-shadow:0 -18px 40px rgba(0,0,0,.8);
+  backdrop-filter: blur(18px);
+}
+.picker-hdr { display:flex; justify-content:space-between; align-items:center; padding:4px 8px; }
+.picker-body { display:flex; gap:8px; height:calc(100% - 44px); padding:6px; }
+.picker-left, .picker-right {
+  background:rgba(15,23,42,0.7);
+  border-radius:12px;
+  padding:8px;
+  overflow:auto;
+}
+.picker-left { width:42%; }
+.picker-right { flex:1; }
+
+/* Category / sub items */
+.picker-item {
+  padding:8px 10px;
+  border-radius:10px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  margin-bottom:6px;
+}
+.picker-item:hover { background:rgba(255,255,255,0.03); transform:translateX(4px); transition:all .18s ease; }
+.picker-item.active { background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.18); color:var(--acc2); }
+.picker-sub { padding:8px 10px; border-radius:8px; cursor:pointer; margin-bottom:6px; }
+.picker-sub:hover { background:rgba(255,255,255,0.02); transform:translateX(-2px); transition:all .14s ease; }
+.picker-sub.selected { background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.12); color:var(--acc2); }
+
+/* make date and amount larger for prominence */
+#e-amt { font-size:1.1rem; padding:10px 12px; border-radius:12px; }
+#e-date, #e-note, #e-category { padding:10px 12px; border-radius:12px; }

@@ -270,6 +270,7 @@
   <!-- FAB -->
   <button class="fab" id="fab" aria-label="Add Entry">+</button>
 
+
   <!-- ENTRY SHEET -->
   <div class="sheet-bg" id="sheet-entry">
     <div class="sheet">
@@ -281,39 +282,28 @@
       </div>
 
       <form id="entry-form">
-        <div class="form-grid">
+        <div class="form-stack">
 
-          <div class="fg">
-            <label for="e-type">Type</label>
-            <select id="e-type">
-              <option value="expense">Expense</option>
-              <option value="income">Income</option>
-            </select>
-          </div>
-
-          <div class="fg">
+          <div class="fg fg-full">
             <label for="e-amt">Amount (₹)</label>
-            <input id="e-amt" type="number" min="0" step="0.01" required>
+            <input id="e-amt" type="number" min="0" step="0.01" required autocomplete="off" inputmode="decimal" />
           </div>
 
-          <div class="fg">
-            <label for="e-cat">Category</label>
-            <select id="e-cat" required></select>
-          </div>
-
-          <div class="fg">
-            <label for="e-subcat">Subcategory</label>
-            <select id="e-subcat"></select>
-          </div>
-
-          <div class="fg">
+          <div class="fg fg-full">
             <label for="e-date">Date</label>
-            <input id="e-date" type="date" required>
+            <input id="e-date" type="date" required />
+          </div>
+
+
+
+          <div class="fg fg-full">
+            <label for="e-category">Category</label>
+            <input id="e-category" type="text" readonly />
           </div>
 
           <div class="fg fg-full">
             <label for="e-note">Note</label>
-            <textarea id="e-note" placeholder="Optional note"></textarea>
+            <input id="e-note" type="text" placeholder="Optional note" />
           </div>
 
         </div>
@@ -329,6 +319,21 @@
     </div>
   </div>
 
+  <!-- CATEGORY PICKER (slides up) -->
+  <div class="picker-bg hidden" id="category-picker">
+    <div class="picker">
+      <div class="picker-hdr">
+        <div class="picker-title">Choose category</div>
+        <button class="picker-close" id="picker-close" aria-label="Close">×</button>
+      </div>
+      <div class="picker-body">
+        <div class="picker-left" id="picker-cats"></div>
+        <div class="picker-right" id="picker-subs">
+          <div class="empty">Select a category</div>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- CATEGORY SHEET -->
   <div class="sheet-bg" id="sheet-cat">
     <div class="sheet">

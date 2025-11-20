@@ -38,6 +38,11 @@ let periodMode = "month"; // "month" | "year"
 let periodOffset = 0;
 let chart = null;
 
+let selectedCatId = null;
+let selectedSubId = null;
+let lastCatClick = 0;
+
+
 /* backup handle + helper state */
 let backupHandle = null;
 let backupBusy = false;
@@ -548,7 +553,7 @@ function renderStats() {
   });
 
   const labels = [], data = [], colors = [];
-  const base = ["#38bdf8","#a855f7","#f97316","#22c55e","#facc15","#fb7185","#2dd4bf","#4f46e5"];
+  const base = ["#38bdf8", "#a855f7", "#f97316", "#22c55e", "#facc15", "#fb7185", "#2dd4bf", "#4f46e5"];
   let i = 0, totalExp = 0;
   Object.keys(byCat).forEach(k => {
     const v = byCat[k];
@@ -597,7 +602,7 @@ function renderStats() {
   });
 
   if (cl) cl.innerHTML = "";
-  const catKeys = Object.keys(byCat).filter(k => byCat[k].amt > 0).sort((a,b) => byCat[b].amt - byCat[a].amt);
+  const catKeys = Object.keys(byCat).filter(k => byCat[k].amt > 0).sort((a, b) => byCat[b].amt - byCat[a].amt);
   catKeys.forEach((k, idx) => {
     const v = byCat[k];
     const pct = Math.round(v.amt * 100 / totalExp);
@@ -1095,6 +1100,97 @@ function rerender() {
    SECTION 12 — BOOTSTRAP: Wiring event listeners + init
    =========================================================================== */
 
+
+/* ======== Category Picker Helpers (added UX) ======== */
+function renderCategoryPicker() {
+  const left = $("#picker-cats");
+  const right = $("#picker-subs");
+  if (!left || !right) return;
+  left.innerHTML = '';
+  right.innerHTML = '<div class="empty">Select a category</div>';
+  Object.values(state.cats).forEach(c => {
+    const item = document.createElement('div');
+    item.className = 'picker-item';
+    item.dataset.id = c.id;
+    item.innerHTML = `<div style="width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center">${c.emoji || '💸'}</div><div style="flex:1;min-width:0;font-weight:600;">${c.name}</div>`;
+    item.addEventListener('click', (e) => {
+      const now = Date.now();
+      const isDouble = (now - lastCatClick) < 350 && lastCatClick !== 0 && selectedCatId === c.id;
+      lastCatClick = now;
+      qa('.picker-item').forEach(x => x.classList.remove('active'));
+      item.classList.add('active');
+      selectedCatId = c.id;
+      selectedSubId = null;
+      if (isDouble) {
+        const inp = $('#e-category');
+        if (inp) { inp.value = c.name; inp.dataset.cat = c.id; inp.dataset.sub = ''; }
+        closeCategoryPicker();
+        return;
+      }
+      right.innerHTML = '';
+      if (!c.subs || !c.subs.length) {
+        right.innerHTML = '<div class="empty">No subcategories</div>';
+      } else {
+        c.subs.forEach(s => {
+          const sub = document.createElement('div');
+          sub.className = 'picker-sub';
+          sub.dataset.id = s.id;
+          sub.textContent = s.name;
+          sub.addEventListener('click', () => {
+            selectedSubId = s.id;
+            const inp = $('#e-category');
+            if (inp) { inp.value = (c.emoji ? c.emoji + ' ' : '') + c.name + ' · ' + s.name; inp.dataset.cat = c.id; inp.dataset.sub = s.id; }
+            closeCategoryPicker();
+          });
+          right.appendChild(sub);
+        });
+      }
+    });
+    left.appendChild(item);
+  });
+}
+function openCategoryPicker() { const bg = $('#category-picker'); if (!bg) return; bg.classList.remove('hidden'); renderCategoryPicker(); }
+function closeCategoryPicker() { const bg = $('#category-picker'); if (!bg) return; bg.classList.add('hidden'); }
+
+/* ======== Override openEntrySheet to auto-focus amount and populate category from selection ======== */
+function openEntrySheet(id) {
+  editId = id || null;
+  const f = $("#entry-form");
+  if (f) f.reset();
+  selectedCatId = null; selectedSubId = null;
+  const amt = $("#e-amt"); if (amt) { amt.value = ''; setTimeout(() => amt.focus(), 80); }
+  const dateEl = $("#e-date"); if (dateEl) dateEl.value = todayISO();
+  const note = $("#e-note"); if (note) note.value = '';
+  const catInp = $("#e-category"); if (catInp) { catInp.value = ''; delete catInp.dataset.cat; delete catInp.dataset.sub; }
+
+  const delBtn = $("#entry-del"); if (delBtn) delBtn.style.display = id ? "inline-flex" : "none";
+  const saveBtn = $("#entry-save"); if (saveBtn) saveBtn.textContent = id ? "Save" : "Add";
+  const title = $("#entry-title"); if (title) title.textContent = id ? "Edit entry" : "Add entry";
+
+  if (id) {
+    const t = state.tx.find(x => x.id === id);
+    if (!t) return;
+    const eType = $("#e-type"); if (eType) eType.value = t.type;
+    const eAmt = $("#e-amt"); if (eAmt) eAmt.value = t.amount;
+    const eDate = $("#e-date"); if (eDate) eDate.value = t.date;
+    const eNote = $("#e-note"); if (eNote) eNote.value = t.note || "";
+    if (t.catId) {
+      const cat = state.cats[t.catId];
+      selectedCatId = t.catId;
+      selectedSubId = t.subId || null;
+      const catInp = $("#e-category");
+      if (catInp) {
+        catInp.value = cat ? (cat.emoji ? cat.emoji + ' ' : '') + cat.name + (t.subId ? ' · ' + ((cat.subs.find(s => s.id === t.subId) || {}).name || '') : '') : '';
+        catInp.dataset.cat = t.catId;
+        catInp.dataset.sub = t.subId || '';
+      }
+    }
+  } else {
+    const eDate = $("#e-date"); if (eDate) eDate.value = todayISO();
+  }
+
+  openSheet("#sheet-entry");
+}
 document.addEventListener("DOMContentLoaded", () => {
   /* load state */
   load();
@@ -1127,13 +1223,14 @@ document.addEventListener("DOMContentLoaded", () => {
     entryForm.addEventListener("submit", ev => {
       ev.preventDefault();
       const type = $("#e-type") ? $("#e-type").value : "expense";
-      const amt = Number($("#e-amt") ? $("#e-amt").value : 0);
-      const catId = $("#e-cat") ? $("#e-cat").value || null : null;
-      const subId = $("#e-subcat") ? $("#e-subcat").value || null : null;
-      const date = $("#e-date") ? $("#e-date").value : todayISO();
-      const note = $("#e-note") ? $("#e-note").value.trim() : "";
-      if (!amt || amt <= 0) { alert("Enter valid amount."); return; }
-      if (!date) { alert("Select date."); return; }
+      const amt = Number($('#e-amt') ? $('#e-amt').value : 0);
+      const catEl = $('#e-category');
+      const catId = catEl ? (catEl.dataset.cat || null) : null;
+      const subId = catEl ? (catEl.dataset.sub || null) : null;
+      const date = $('#e-date') ? $('#e-date').value : todayISO();
+      const note = $('#e-note') ? $('#e-note').value.trim() : '';
+      if (!amt || amt <= 0) { alert('Enter valid amount.'); return; }
+      if (!date) { alert('Select date.'); return; }
       if (editId) {
         const t = state.tx.find(x => x.id === editId);
         if (t) {
@@ -1143,164 +1240,183 @@ document.addEventListener("DOMContentLoaded", () => {
         state.tx.push({ id: Date.now().toString(), type, amount: amt, catId, subId, date, note });
       }
       save();
-      triggerBackup("Entry added/updated");
-      closeSheet("#sheet-entry");
+      triggerBackup('Entry added/updated');
+      closeSheet('#sheet-entry');
       editId = null;
       rerender();
     });
   }
-
-  /* sheet background click to close */
-  const sheetEntry = $("#sheet-entry");
-  if (sheetEntry) sheetEntry.addEventListener("click", e => { if (e.target.id === "sheet-entry") { editId = null; closeSheet("#sheet-entry"); } });
-
-  /* category sheet wiring */
-  if ($("#cat-close")) $("#cat-close").onclick = () => { editCatId = null; tempSubcats = []; prevSubIds = []; currentCatIdForSheet = null; closeSheet("#sheet-cat"); };
-  const sheetCat = $("#sheet-cat");
-  if (sheetCat) sheetCat.addEventListener("click", e => { if (e.target.id === "sheet-cat") { editCatId = null; tempSubcats = []; prevSubIds = []; currentCatIdForSheet = null; closeSheet("#sheet-cat"); } });
-
-  if ($("#cat-form")) $("#cat-form").addEventListener("submit", saveCategory);
-  if ($("#cat-del")) $("#cat-del").onclick = deleteCategory;
-  if ($("#btn-add-cat")) $("#btn-add-cat").onclick = () => openCatSheet(null);
-
-  /* subcat add/remove */
-  const subAddBtn = $("#c-subcat-add");
-  const subInput = $("#c-subcat-input");
-  const subList = $("#subcat-list");
-  if (subAddBtn && subInput) {
-    subAddBtn.onclick = () => {
-      const val = subInput.value.trim();
-      if (!val) return;
-      let id;
-      if (currentCatIdForSheet) id = currentCatIdForSheet + "-s" + Date.now();
-      else id = "new-" + Date.now();
-      tempSubcats.push({ id, name: val });
-      subInput.value = "";
-      renderSubcatList();
-    };
-  }
-  if (subList) {
-    subList.addEventListener("click", (e) => {
-      const btn = e.target.closest(".subcat-del");
-      if (!btn) return;
-      const id = btn.dataset.id;
-      tempSubcats = tempSubcats.filter(s => s.id !== id);
-      renderSubcatList();
-    });
-  }
-
-  /* month/year nav */
-  if ($("#m-prev")) $("#m-prev").onclick = () => { periodOffset--; rerender(); };
-  if ($("#m-next")) $("#m-next").onclick = () => { periodOffset++; rerender(); };
-  if ($("#mode-month")) $("#mode-month").onclick = () => { if (periodMode !== "month") { periodMode = "month"; periodOffset = 0; $("#mode-month")?.classList.add("seg-active"); $("#mode-year")?.classList.remove("seg-active"); rerender(); } };
-  if ($("#mode-year")) $("#mode-year").onclick = () => { if (periodMode !== "year") { periodMode = "year"; periodOffset = 0; $("#mode-year")?.classList.add("seg-active"); $("#mode-month")?.classList.remove("seg-active"); rerender(); } };
-
-  /* export/import/reset */
-  if ($("#btn-export")) $("#btn-export").onclick = () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "expense-backup.json";
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const fileImport = $("#file-import");
-  if (fileImport) fileImport.addEventListener("change", e => {
-    const f = e.target.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = ev => {
-      try {
-        const d = JSON.parse(ev.target.result);
-        if (!d || typeof d !== "object") { alert("Invalid file."); return; }
-        if (!confirm("Import data and replace existing?")) return;
-        state.tx = d.tx || [];
-        state.cats = d.cats || {};
-        state.settings = d.settings || state.settings;
-        save();
-        triggerBackup("Import data");
-        rerender();
-        alert("Import successful.");
-      } catch (err) {
-        alert("Could not import.");
-      }
-    };
-    r.readAsText(f);
-  });
-
-  if ($("#btn-clear")) $("#btn-clear").onclick = () => {
-    if (!confirm("Clear all data? This cannot be undone.")) return;
-    state = { tx: [], cats: {}, settings: { pinHash: state.settings.pinHash, bio: false, lastBackupTS: null } };
-    defaultCats();
-    save();
-    triggerBackup("Reset all data");
-    rerender();
-  };
-
-  /* pin & biometric toggles */
-  if ($("#btn-change-pin")) $("#btn-change-pin").onclick = () => {
-    state.settings.pinHash = null;
-    save();
-    const lockEl = $("#lock"); if (lockEl) lockEl.classList.remove("hidden");
-    setupLock();
-  };
-
-  /* UPDATED: btn-toggle-bio now registers passkey if enabling */
-  if ($("#btn-toggle-bio")) {
-    $("#btn-toggle-bio").onclick = async () => {
-      // If enabling and no passkey exists, create it first
-      if (!state.settings.bio) {
-        const stored = localStorage.getItem(PASSKEY_ID);
-        if (!stored) {
-          const r = await registerBiometricKey();
-          if (!r.success) return alert("Biometric setup failed or cancelled.");
-        }
-      }
-      state.settings.bio = !state.settings.bio;
-      save();
-      updateBioRow();
-      alert(state.settings.bio ? "Biometric enabled" : "Biometric disabled");
-    };
-  }
-
-  /* backup UI wiring */
-  const chooseBtn = $("#btn-choose-backup");
-  const backupNowBtn = $("#btn-backup-now");
-  const fixBtn = $("#backup-fix");
-  const dismissBtn = $("#backup-dismiss");
-
-  if (chooseBtn) chooseBtn.onclick = () => chooseBackupFile();
-  if (backupNowBtn) backupNowBtn.onclick = () => { if (!backupHandle) { alert("Choose a backup file first."); return; } saveBackup("Manual backup"); };
-  if (fixBtn) fixBtn.onclick = () => chooseBackupFile();
-  if (dismissBtn) dismissBtn.onclick = () => hideBackupBanner();
-
-  if ("indexedDB" in window) {
-    loadBackupHandle().then((handle) => {
-      backupHandle = handle || null; updateBackupLabel(); if (backupHandle) checkDailyBackup();
-    }).catch((e) => console.error("[Backup] load handle failed:", e));
-  } else {
-    console.log("[Backup] IndexedDB not available");
-  }
-
-  window.addEventListener("focus", () => { if (backupHandle) checkDailyBackup(); });
-
-  /* misc init */
-  updateBioRow();
-  fillCatSelect();
-  setupLock();
-
-  /* Optional: try auto-unlock with biometric if user enabled it.
-     Note: some browsers require user gesture for navigator.credentials.get;
-     this attempt is best-effort and will silently fail if blocked. */
-  if (state.settings.bio && localStorage.getItem(PASSKEY_ID)) {
-    setTimeout(async () => {
-      const res = await biometricUnlock();
-      if (res.success) {
-        const ls = $("#lock");
-        if (ls) ls.classList.add("hidden");
-        rerender();
-      }
-    }, 350);
-  }
+  save();
+  triggerBackup("Entry added/updated");
+  closeSheet("#sheet-entry");
+  editId = null;
+  rerender();
 });
+
+/* sheet background click to close */
+const sheetEntry = $("#sheet-entry");
+if (sheetEntry) sheetEntry.addEventListener("click", e => { if (e.target.id === "sheet-entry") { editId = null; closeSheet("#sheet-entry"); } });
+
+/* category sheet wiring */
+if ($("#cat-close")) $("#cat-close").onclick = () => { editCatId = null; tempSubcats = []; prevSubIds = []; currentCatIdForSheet = null; closeSheet("#sheet-cat"); };
+const sheetCat = $("#sheet-cat");
+if (sheetCat) sheetCat.addEventListener("click", e => { if (e.target.id === "sheet-cat") { editCatId = null; tempSubcats = []; prevSubIds = []; currentCatIdForSheet = null; closeSheet("#sheet-cat"); } });
+
+if ($("#cat-form")) $("#cat-form").addEventListener("submit", saveCategory);
+if ($("#cat-del")) $("#cat-del").onclick = deleteCategory;
+if ($("#btn-add-cat")) $("#btn-add-cat").onclick = () => openCatSheet(null);
+
+/* subcat add/remove */
+const subAddBtn = $("#c-subcat-add");
+const subInput = $("#c-subcat-input");
+const subList = $("#subcat-list");
+if (subAddBtn && subInput) {
+  subAddBtn.onclick = () => {
+    const val = subInput.value.trim();
+    if (!val) return;
+    let id;
+    if (currentCatIdForSheet) id = currentCatIdForSheet + "-s" + Date.now();
+    else id = "new-" + Date.now();
+    tempSubcats.push({ id, name: val });
+    subInput.value = "";
+    renderSubcatList();
+  };
+}
+if (subList) {
+  subList.addEventListener("click", (e) => {
+    const btn = e.target.closest(".subcat-del");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    tempSubcats = tempSubcats.filter(s => s.id !== id);
+    renderSubcatList();
+  });
+}
+
+/* month/year nav */
+if ($("#m-prev")) $("#m-prev").onclick = () => { periodOffset--; rerender(); };
+if ($("#m-next")) $("#m-next").onclick = () => { periodOffset++; rerender(); };
+if ($("#mode-month")) $("#mode-month").onclick = () => { if (periodMode !== "month") { periodMode = "month"; periodOffset = 0; $("#mode-month")?.classList.add("seg-active"); $("#mode-year")?.classList.remove("seg-active"); rerender(); } };
+if ($("#mode-year")) $("#mode-year").onclick = () => { if (periodMode !== "year") { periodMode = "year"; periodOffset = 0; $("#mode-year")?.classList.add("seg-active"); $("#mode-month")?.classList.remove("seg-active"); rerender(); } };
+
+/* export/import/reset */
+if ($("#btn-export")) $("#btn-export").onclick = () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "expense-backup.json";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+const fileImport = $("#file-import");
+if (fileImport) fileImport.addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const d = JSON.parse(ev.target.result);
+      if (!d || typeof d !== "object") { alert("Invalid file."); return; }
+      if (!confirm("Import data and replace existing?")) return;
+      state.tx = d.tx || [];
+      state.cats = d.cats || {};
+      state.settings = d.settings || state.settings;
+      save();
+      triggerBackup("Import data");
+      rerender();
+      alert("Import successful.");
+    } catch (err) {
+      alert("Could not import.");
+    }
+  };
+  r.readAsText(f);
+});
+
+if ($("#btn-clear")) $("#btn-clear").onclick = () => {
+  if (!confirm("Clear all data? This cannot be undone.")) return;
+  state = { tx: [], cats: {}, settings: { pinHash: state.settings.pinHash, bio: false, lastBackupTS: null } };
+  defaultCats();
+  save();
+  triggerBackup("Reset all data");
+  rerender();
+};
+
+/* pin & biometric toggles */
+if ($("#btn-change-pin")) $("#btn-change-pin").onclick = () => {
+  state.settings.pinHash = null;
+  save();
+  const lockEl = $("#lock"); if (lockEl) lockEl.classList.remove("hidden");
+  setupLock();
+};
+
+/* UPDATED: btn-toggle-bio now registers passkey if enabling */
+if ($("#btn-toggle-bio")) {
+  $("#btn-toggle-bio").onclick = async () => {
+    // If enabling and no passkey exists, create it first
+    if (!state.settings.bio) {
+      const stored = localStorage.getItem(PASSKEY_ID);
+      if (!stored) {
+        const r = await registerBiometricKey();
+        if (!r.success) return alert("Biometric setup failed or cancelled.");
+      }
+    }
+    state.settings.bio = !state.settings.bio;
+    save();
+    updateBioRow();
+    alert(state.settings.bio ? "Biometric enabled" : "Biometric disabled");
+  };
+}
+
+/* backup UI wiring */
+const chooseBtn = $("#btn-choose-backup");
+const backupNowBtn = $("#btn-backup-now");
+const fixBtn = $("#backup-fix");
+const dismissBtn = $("#backup-dismiss");
+
+if (chooseBtn) chooseBtn.onclick = () => chooseBackupFile();
+if (backupNowBtn) backupNowBtn.onclick = () => { if (!backupHandle) { alert("Choose a backup file first."); return; } saveBackup("Manual backup"); };
+if (fixBtn) fixBtn.onclick = () => chooseBackupFile();
+if (dismissBtn) dismissBtn.onclick = () => hideBackupBanner();
+
+if ("indexedDB" in window) {
+  loadBackupHandle().then((handle) => {
+    backupHandle = handle || null; updateBackupLabel(); if (backupHandle) checkDailyBackup();
+  }).catch((e) => console.error("[Backup] load handle failed:", e));
+} else {
+  console.log("[Backup] IndexedDB not available");
+}
+
+window.addEventListener("focus", () => { if (backupHandle) checkDailyBackup(); });
+
+
+/* --- New UX: date click and category picker wiring --- */
+const dateEl = $('#e-date');
+if (dateEl) {
+  dateEl.addEventListener('click', (ev) => { ev.stopPropagation(); try { dateEl.showPicker && dateEl.showPicker(); } catch (e) { } dateEl.focus(); });
+}
+const catInp = $('#e-category');
+if (catInp) {
+  catInp.addEventListener('click', (e) => { openCategoryPicker(); });
+}
+const pickerClose = $('#picker-close');
+if (pickerClose) pickerClose.onclick = () => closeCategoryPicker();
+const pickerBg = $('#category-picker');
+if (pickerBg) pickerBg.addEventListener('click', (e) => { if (e.target === pickerBg) closeCategoryPicker(); });
+/* misc init */
+updateBioRow();
+fillCatSelect();
+setupLock();
+
+/* Optional: try auto-unlock with biometric if user enabled it.
+   Note: some browsers require user gesture for navigator.credentials.get;
+   this attempt is best-effort and will silently fail if blocked. */
+if (state.settings.bio && localStorage.getItem(PASSKEY_ID)) {
+  setTimeout(async () => {
+    const res = await biometricUnlock();
+    if (res.success) {
+      const ls = $("#lock");
+      if (ls) ls.classList.add("hidden");
+      rerender();
+    }
+  }, 350);
+}
