@@ -658,27 +658,6 @@ function openSheet(id) { const el = $(id); if (el) el.classList.add("active"); }
 function closeSheet(id) { const el = $(id); if (el) el.classList.remove("active"); }
 
 /* fill category select safely */
-function fillCatSelect() {
-  const sel = $("#e-cat"), sub = $("#e-subcat");
-  if (!sel || !sub) return;
-  sel.innerHTML = "";
-  const opt = document.createElement("option"); opt.value = ""; opt.textContent = "Select"; sel.appendChild(opt);
-  Object.values(state.cats).forEach(c => {
-    const o = document.createElement("option"); o.value = c.id; o.textContent = (c.emoji || "") + " " + c.name; sel.appendChild(o);
-  });
-  sub.innerHTML = "";
-  const o2 = document.createElement("option"); o2.value = ""; o2.textContent = "None"; sub.appendChild(o2);
-}
-
-function fillSubSelect(catId) {
-  const sub = $("#e-subcat");
-  if (!sub) return;
-  sub.innerHTML = "";
-  const o = document.createElement("option"); o.value = ""; o.textContent = "None"; sub.appendChild(o);
-  const c = state.cats[catId];
-  if (!c) return;
-  c.subs.forEach(s => { const o2 = document.createElement("option"); o2.value = s.id; o2.textContent = s.name; sub.appendChild(o2); });
-}
 
 /* ENTRY SHEET: open for add/edit */
 function openEntrySheet(id) {
@@ -1212,7 +1191,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if (fab) fab.onclick = () => openEntrySheet(null);
 
   /* entry sheet wiring */
-  safeAddEvent("#e-cat", "change", (e) => fillSubSelect(e.target.value));
   if ($("#entry-close")) $("#entry-close").onclick = () => { editId = null; closeSheet("#sheet-entry"); };
   if ($("#entry-cancel")) $("#entry-cancel").onclick = () => { editId = null; closeSheet("#sheet-entry"); };
   if ($("#entry-del")) $("#entry-del").onclick = deleteEntry;
@@ -1246,11 +1224,6 @@ document.addEventListener("DOMContentLoaded", () => {
       rerender();
     });
   }
-  save();
-  triggerBackup("Entry added/updated");
-  closeSheet("#sheet-entry");
-  editId = null;
-  rerender();
 });
 
 /* sheet background click to close */
@@ -1404,7 +1377,6 @@ const pickerBg = $('#category-picker');
 if (pickerBg) pickerBg.addEventListener('click', (e) => { if (e.target === pickerBg) closeCategoryPicker(); });
 /* misc init */
 updateBioRow();
-fillCatSelect();
 setupLock();
 
 /* Optional: try auto-unlock with biometric if user enabled it.
