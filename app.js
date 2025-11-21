@@ -658,6 +658,27 @@ function openSheet(id) { const el = $(id); if (el) el.classList.add("active"); }
 function closeSheet(id) { const el = $(id); if (el) el.classList.remove("active"); }
 
 /* fill category select safely */
+function fillCatSelect() {
+  const sel = $("#e-cat"), sub = $("#e-subcat");
+  if (!sel || !sub) return;
+  sel.innerHTML = "";
+  const opt = document.createElement("option"); opt.value = ""; opt.textContent = "Select"; sel.appendChild(opt);
+  Object.values(state.cats).forEach(c => {
+    const o = document.createElement("option"); o.value = c.id; o.textContent = (c.emoji || "") + " " + c.name; sel.appendChild(o);
+  });
+  sub.innerHTML = "";
+  const o2 = document.createElement("option"); o2.value = ""; o2.textContent = "None"; sub.appendChild(o2);
+}
+
+function fillSubSelect(catId) {
+  const sub = $("#e-subcat");
+  if (!sub) return;
+  sub.innerHTML = "";
+  const o = document.createElement("option"); o.value = ""; o.textContent = "None"; sub.appendChild(o);
+  const c = state.cats[catId];
+  if (!c) return;
+  c.subs.forEach(s => { const o2 = document.createElement("option"); o2.value = s.id; o2.textContent = s.name; sub.appendChild(o2); });
+}
 
 /* ENTRY SHEET: open for add/edit */
 function openEntrySheet(id) {
@@ -1191,6 +1212,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (fab) fab.onclick = () => openEntrySheet(null);
 
   /* entry sheet wiring */
+  safeAddEvent("#e-cat", "change", (e) => fillSubSelect(e.target.value));
   if ($("#entry-close")) $("#entry-close").onclick = () => { editId = null; closeSheet("#sheet-entry"); };
   if ($("#entry-cancel")) $("#entry-cancel").onclick = () => { editId = null; closeSheet("#sheet-entry"); };
   if ($("#entry-del")) $("#entry-del").onclick = deleteEntry;
@@ -1224,6 +1246,11 @@ document.addEventListener("DOMContentLoaded", () => {
       rerender();
     });
   }
+  save();
+  triggerBackup("Entry added/updated");
+  closeSheet("#sheet-entry");
+  editId = null;
+  rerender();
 });
 
 /* sheet background click to close */
@@ -1377,6 +1404,7 @@ const pickerBg = $('#category-picker');
 if (pickerBg) pickerBg.addEventListener('click', (e) => { if (e.target === pickerBg) closeCategoryPicker(); });
 /* misc init */
 updateBioRow();
+fillCatSelect();
 setupLock();
 
 /* Optional: try auto-unlock with biometric if user enabled it.
@@ -1395,50 +1423,67 @@ if (state.settings.bio && localStorage.getItem(PASSKEY_ID)) {
 
 
 
-/* Attempt to automatically trigger biometric unlock when the lock screen is shown.
-   Note: Browsers require a user gesture for navigator.credentials.get() in many cases.
-   This will try best-effort: if blocked, the 'Use biometrics' button remains for manual tap.
-*/
+// ===== Corrective initialization runner (idempotent) =====
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    // Re-run safe initialization steps to ensure bio visibility and lock setup
+    if (typeof load === 'function') load();
+    if (typeof defaultCats === 'function') defaultCats();
+    if (typeof updateBioRow === 'function') updateBioRow();
+    if (typeof setupLock === 'function') setupLock();
+    if (typeof mLabel === 'function') mLabel();
+    if (typeof renderHome === 'function') renderHome();
+    if (typeof renderCatMgr === 'function') renderCatMgr();
+    if (typeof setupSwipe === 'function') setupSwipe();
+    const navs = document.querySelectorAll('.nav-item');
+    navs.forEach(n => n.addEventListener('click', () => setTab(n.dataset.tab)));
+    const fab = document.querySelector('#fab');
+    if (fab) fab.onclick = () => openEntrySheet(null);
+  } catch (e) {
+    console.warn('Corrective init failed:', e);
+  }
+});
+
+// ===== Auto-biometric attempt helper for lock visibility (best-effort) =====
 async function attemptAutoBiometricUnlock() {
   try {
-    if (!state.settings.bio) return;
-    if (!localStorage.getItem(PASSKEY_ID)) return;
-    if (!canUseBio()) return;
-    // Best-effort: attempt biometricUnlock. May be blocked by browser if no user gesture.
+    if (!state.settings || !state.settings.bio) return false;
+    if (!localStorage.getItem(PASSKEY_ID)) return false;
+    if (!canUseBio()) return false;
     const res = await biometricUnlock();
     if (res && res.success) {
-      const ls = $('#lock');
-      if (ls) ls.classList.add('hidden');
+      const lockEl = document.querySelector('#lock');
+      if (lockEl) lockEl.classList.add('hidden');
       rerender();
       return true;
     }
   } catch (err) {
-    console.warn('Auto biometric attempt failed or was blocked:', err);
+    console.warn('Auto biometric attempt blocked or failed:', err);
   }
   return false;
 }
 
-/* Hook: when lock is shown, try to auto-unlock after a short delay.
-   We attach this listener once.
-*/
-(function attachAutoBioOnLockShow(){
-  const lock = $('#lock');
+(function attachAutoBioObserver() {
+  const lock = document.querySelector('#lock');
   if (!lock) return;
-  const origShow = lock.classList;
-  // Observe class changes to detect when lock becomes visible (removes 'hidden' class)
   const obs = new MutationObserver((mutations) => {
     for (const mu of mutations) {
       if (mu.attributeName === 'class') {
         const cls = lock.className || '';
-        // If lock is visible (no 'hidden' class), attempt auto biometric unlock
         if (!cls.includes('hidden')) {
-          // small delay to allow UI settle and to respect focus/timeouts
-          setTimeout(() => {
-            attemptAutoBiometricUnlock();
-          }, 250);
+          setTimeout(() => { attemptAutoBiometricUnlock(); }, 250);
         }
       }
     }
   });
-  obs.observe(lock, { attributes: true });
+  obs.observe(lock, { attributes: true, attributeFilter: ['class'] });
 })();
+
+// Try one-time auto attempt after a short delay on initial load
+setTimeout(() => {
+  const lockEl = document.querySelector('#lock');
+  if (lockEl && !lockEl.className.includes('hidden')) {
+    attemptAutoBiometricUnlock();
+  }
+}, 500);
+
