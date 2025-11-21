@@ -658,28 +658,6 @@ function openSheet(id) { const el = $(id); if (el) el.classList.add("active"); }
 function closeSheet(id) { const el = $(id); if (el) el.classList.remove("active"); }
 
 /* fill category select safely */
-function fillCatSelect() {
-  const sel = $("#e-cat"), sub = $("#e-subcat");
-  if (!sel || !sub) return;
-  sel.innerHTML = "";
-  const opt = document.createElement("option"); opt.value = ""; opt.textContent = "Select"; sel.appendChild(opt);
-  Object.values(state.cats).forEach(c => {
-    const o = document.createElement("option"); o.value = c.id; o.textContent = (c.emoji || "") + " " + c.name; sel.appendChild(o);
-  });
-  sub.innerHTML = "";
-  const o2 = document.createElement("option"); o2.value = ""; o2.textContent = "None"; sub.appendChild(o2);
-}
-
-function fillSubSelect(catId) {
-  const sub = $("#e-subcat");
-  if (!sub) return;
-  sub.innerHTML = "";
-  const o = document.createElement("option"); o.value = ""; o.textContent = "None"; sub.appendChild(o);
-  const c = state.cats[catId];
-  if (!c) return;
-  c.subs.forEach(s => { const o2 = document.createElement("option"); o2.value = s.id; o2.textContent = s.name; sub.appendChild(o2); });
-}
-
 /* ENTRY SHEET: open for add/edit */
 function openEntrySheet(id) {
   editId = id || null;
@@ -687,7 +665,6 @@ function openEntrySheet(id) {
   if (f) f.reset();
   const typeEl = $("#e-type"); if (typeEl) typeEl.value = "expense";
   const dateEl = $("#e-date"); if (dateEl) dateEl.value = todayISO();
-  fillCatSelect();
   const sub = $("#e-subcat"); if (sub) sub.innerHTML = '<option value="">None</option>';
   const delBtn = $("#entry-del"); if (delBtn) delBtn.style.display = id ? "inline-flex" : "none";
   const saveBtn = $("#entry-save"); if (saveBtn) saveBtn.textContent = id ? "Save" : "Add";
@@ -1404,7 +1381,6 @@ const pickerBg = $('#category-picker');
 if (pickerBg) pickerBg.addEventListener('click', (e) => { if (e.target === pickerBg) closeCategoryPicker(); });
 /* misc init */
 updateBioRow();
-fillCatSelect();
 setupLock();
 
 /* Optional: try auto-unlock with biometric if user enabled it.
@@ -1423,7 +1399,7 @@ if (state.settings.bio && localStorage.getItem(PASSKEY_ID)) {
 
 
 
-// ===== Corrective initialization runner (idempotent) =====
+
 document.addEventListener('DOMContentLoaded', () => {
   try {
     // Re-run safe initialization steps to ensure bio visibility and lock setup
@@ -1463,22 +1439,6 @@ async function attemptAutoBiometricUnlock() {
   return false;
 }
 
-(function attachAutoBioObserver() {
-  const lock = document.querySelector('#lock');
-  if (!lock) return;
-  const obs = new MutationObserver((mutations) => {
-    for (const mu of mutations) {
-      if (mu.attributeName === 'class') {
-        const cls = lock.className || '';
-        if (!cls.includes('hidden')) {
-          setTimeout(() => { attemptAutoBiometricUnlock(); }, 250);
-        }
-      }
-    }
-  });
-  obs.observe(lock, { attributes: true, attributeFilter: ['class'] });
-})();
-
 // Try one-time auto attempt after a short delay on initial load
 setTimeout(() => {
   const lockEl = document.querySelector('#lock');
@@ -1486,4 +1446,3 @@ setTimeout(() => {
     attemptAutoBiometricUnlock();
   }
 }, 500);
-
