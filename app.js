@@ -1392,3 +1392,53 @@ if (state.settings.bio && localStorage.getItem(PASSKEY_ID)) {
     }
   }, 350);
 }
+
+
+
+/* Attempt to automatically trigger biometric unlock when the lock screen is shown.
+   Note: Browsers require a user gesture for navigator.credentials.get() in many cases.
+   This will try best-effort: if blocked, the 'Use biometrics' button remains for manual tap.
+*/
+async function attemptAutoBiometricUnlock() {
+  try {
+    if (!state.settings.bio) return;
+    if (!localStorage.getItem(PASSKEY_ID)) return;
+    if (!canUseBio()) return;
+    // Best-effort: attempt biometricUnlock. May be blocked by browser if no user gesture.
+    const res = await biometricUnlock();
+    if (res && res.success) {
+      const ls = $('#lock');
+      if (ls) ls.classList.add('hidden');
+      rerender();
+      return true;
+    }
+  } catch (err) {
+    console.warn('Auto biometric attempt failed or was blocked:', err);
+  }
+  return false;
+}
+
+/* Hook: when lock is shown, try to auto-unlock after a short delay.
+   We attach this listener once.
+*/
+(function attachAutoBioOnLockShow(){
+  const lock = $('#lock');
+  if (!lock) return;
+  const origShow = lock.classList;
+  // Observe class changes to detect when lock becomes visible (removes 'hidden' class)
+  const obs = new MutationObserver((mutations) => {
+    for (const mu of mutations) {
+      if (mu.attributeName === 'class') {
+        const cls = lock.className || '';
+        // If lock is visible (no 'hidden' class), attempt auto biometric unlock
+        if (!cls.includes('hidden')) {
+          // small delay to allow UI settle and to respect focus/timeouts
+          setTimeout(() => {
+            attemptAutoBiometricUnlock();
+          }, 250);
+        }
+      }
+    }
+  });
+  obs.observe(lock, { attributes: true });
+})();
